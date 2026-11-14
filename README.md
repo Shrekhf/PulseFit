@@ -14,7 +14,7 @@ An Android starter app based on the provided PulseFit AI HTML prototype. The UI 
 
 ## Build
 
-Open this folder in Android Studio and let it install the Android SDK (API 35) if prompted. Then run the `app` configuration, or from this directory run:
+Open this folder in Android Studio and install Android SDK Platform 36 and Build Tools 36.0.0 if prompted. Then run the `app` configuration, or from this directory run:
 
 ```powershell
 .
