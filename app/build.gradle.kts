@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.parcelize")
     id("com.google.devtools.ksp")
 }
 
@@ -48,5 +49,14 @@ dependencies {
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.guava:guava:33.3.1-android")
     implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
+    implementation("com.google.code.gson:gson:2.13.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
+}
+
+// Samsung distributes this AAR separately. Use the live adapter when it is installed locally;
+// clean checkouts remain buildable with the Health Connect fallback.
+val samsungHealthAar = file("libs/samsung-health-data-api-1.1.0.aar")
+if (samsungHealthAar.exists()) {
+    dependencies.add("implementation", files(samsungHealthAar))
+    android.sourceSets.getByName("main").java.srcDir("src/samsungSdk/java")
 }

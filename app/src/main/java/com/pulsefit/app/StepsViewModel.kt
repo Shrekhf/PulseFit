@@ -1,6 +1,7 @@
 package com.pulsefit.app
 
 import android.app.Application
+import android.app.Activity
 import android.net.Uri
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -41,13 +42,25 @@ class StepsViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun refresh() = viewModelScope.launch {
         _state.value = _state.value.copy(isLoading = true)
-        val data = repo.readToday()
+        val sdkData = if (repo.samsungSdkDataSource.isAvailable) runCatching { repo.samsungSdkDataSource.readStepsAndGoals() }.getOrNull() else null
+        val data = if (sdkData == null) repo.readToday() else null
         val recovery = repo.readRecovery()
-        if (data != null) {
-            if (data.steps > 0) dao.putDailyLog(DailyLogEntity(LocalDate.now().toString(), data.steps))
-            prefs.edit { p -> data.activeCalories?.let { p[intPreferencesKey("wearable_active_calories")] = it } ?: p.remove(intPreferencesKey("wearable_active_calories")) }
-            _state.value = _state.value.copy(snapshot = data, recovery = recovery, status = if (data.fromSamsungHealth) "Synced · Samsung Health origin" else "Synced · all Health Connect origins", isLoading = false)
+        val selected = sdkData?.let { SamsungHealthSnapshot(it.steps, fromSamsungHealth = true, averageHeartRate = it.heartRate, sleepMinutes = it.sleepMinutes, stepGoal = it.stepGoal, activeCaloriesGoal = it.activeCaloriesGoal, energyScore = it.energyScore) } ?: data
+        if (selected != null) {
+            if (selected.steps > 0) dao.putDailyLog(DailyLogEntity(LocalDate.now().toString(), selected.steps))
+            prefs.edit { p ->
+                selected.activeCalories?.let { p[intPreferencesKey("wearable_active_calories")] = it }
+                if (sdkData == null && selected.activeCalories == null) p.remove(intPreferencesKey("wearable_active_calories"))
+                selected.stepGoal?.let { p[intPreferencesKey("step_goal")] = it }
+            }
+            val syncSource = when { sdkData != null -> "Synced directly from Samsung Health Data SDK"; data?.fromSamsungHealth == true -> "Synced · Samsung Health Health Connect origin"; else -> "Synced · all Health Connect origins" }
+            _state.value = _state.value.copy(snapshot = selected, recovery = recovery, status = syncSource, isLoading = false, sdkAvailable = repo.samsungSdkDataSource.isAvailable)
         } else _state.value = _state.value.copy(recovery = recovery, isLoading = false, status = "No permitted Health Connect step data · manual and sensor sources remain available")
+    }
+    fun requestSamsungPermissions(activity: Activity) = viewModelScope.launch {
+        val accepted = runCatching { repo.samsungSdkDataSource.requestPermissions(activity) }.getOrDefault(false)
+        _state.value = _state.value.copy(status = if (accepted) "Samsung Health permissions granted" else "Samsung Health SDK permission unavailable or declined")
+        refresh()
     }
     fun setIncludeAllOrigins(value: Boolean) = viewModelScope.launch {
         repo.setIncludeAllOrigins(value); _state.value = _state.value.copy(includeAllOrigins = value); refresh()

@@ -60,6 +60,7 @@ private val StepWhite = Color(0xFFF8FAFC)
                 LinearProgressIndicator(progress = { (steps.toFloat() / dashboard.settings.stepGoal.coerceAtLeast(1)).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth(), color = StepGreen, trackColor = Color(0xFF263346))
                 Text("${state.status} · ${if (state.isLoading) "Refreshing…" else "${selectedBurn} kcal active burn"}", color = StepMuted, fontSize = 10.sp)
                 Button(onClick = onConnectHealthConnect, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = StepGreen, contentColor = StepBg)) { Icon(Icons.Default.HealthAndSafety, null); Spacer(Modifier.width(6.dp)); Text("Connect / permissions") }
+                if (state.sdkAvailable) OutlinedButton(onClick = { (context as? android.app.Activity)?.let(vm::requestSamsungPermissions) }, modifier = Modifier.fillMaxWidth()) { Text("Connect Samsung Health Data SDK", fontSize = 10.sp) }
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     OutlinedButton(onClick = vm::refresh, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Sync, null); Text("Sync") }
                     OutlinedButton(onClick = { context.packageManager.getLaunchIntentForPackage(SamsungHealthRepository.SAMSUNG_HEALTH_PACKAGE)?.let(context::startActivity) ?: (context as? android.app.Activity)?.let { guideOpen = true } }, modifier = Modifier.weight(1f)) { Text("Open Samsung Health", fontSize = 10.sp) }
@@ -110,7 +111,10 @@ private val StepWhite = Color(0xFFF8FAFC)
                 state.recovery?.let { recovery ->
                     Text(recovery.autoRegulationTip ?: "Recovery context is ready for the gym planner.", color = StepGreen, fontSize = 11.sp)
                 }
-                Text("Samsung SDK adapter: ${if (state.sdkAvailable) "available" else "not installed; Health Connect is active primary"}", color = StepMuted, fontSize = 9.sp)
+                Text("Samsung SDK adapter: ${if (state.sdkAvailable) "available" else "unavailable on this device; Health Connect is active primary"}", color = StepMuted, fontSize = 9.sp)
+                state.snapshot?.stepGoal?.let { DataLine("Samsung Health step goal", "$it steps") }
+                state.snapshot?.activeCaloriesGoal?.let { DataLine("Samsung Health active calorie goal", "$it kcal") }
+                state.snapshot?.energyScore?.let { DataLine("Samsung Health Energy Score", "$it") }
             }
         }
     }

@@ -1,6 +1,8 @@
 package com.pulsefit.app
 
 import android.content.Context
+import android.app.Activity
+import android.os.Build
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
@@ -26,7 +28,10 @@ data class SamsungHealthSnapshot(
     val averageHeartRate: Int? = null,
     val sleepMinutes: Int? = null,
     val exerciseSessions: Int = 0,
-    val fromSamsungHealth: Boolean = false
+    val fromSamsungHealth: Boolean = false,
+    val stepGoal: Int? = null,
+    val activeCaloriesGoal: Int? = null,
+    val energyScore: Int? = null
 )
 
 object StepBurnCalculator {
@@ -45,20 +50,15 @@ object StepBurnCalculator {
 /** Samsung Health Data SDK is shipped by Samsung as a separate AAR. */
 interface SamsungHealthDataSdkDataSource {
     val isAvailable: Boolean
+    suspend fun requestPermissions(activity: Activity): Boolean
     suspend fun readStepsAndGoals(): SamsungSdkDailyData?
 }
 data class SamsungSdkDailyData(val steps: Int, val stepGoal: Int?, val activeCaloriesGoal: Int?, val energyScore: Int?, val sleepMinutes: Int?, val heartRate: Int?)
 
-/** Safe default adapter until the Samsung-provided samsung-health-data-api.aar is installed. */
-class UnavailableSamsungHealthDataSdkDataSource : SamsungHealthDataSdkDataSource {
-    override val isAvailable = false
-    override suspend fun readStepsAndGoals(): SamsungSdkDailyData? = null
-}
-
 class SamsungHealthRepository(
     private val context: Context,
     private val manager: HealthConnectManager = HealthConnectManager(context),
-    private val directSdk: SamsungHealthDataSdkDataSource = UnavailableSamsungHealthDataSdkDataSource()
+    private val directSdk: SamsungHealthDataSdkDataSource = createSamsungHealthDataSdkDataSource(context)
 ) {
     private val preferences = UserPreferencesRepository(context)
     val samsungSdkDataSource get() = directSdk
@@ -94,7 +94,20 @@ class SamsungHealthRepository(
         SamsungHealthSnapshot(steps, active, total, heart, sleep, exerciseCount, fromSamsungHealth = samsungOnly)
     }.getOrNull()
 
-    suspend fun readRecovery(): RecoverySnapshot? = runCatching {
+    suspend fun readRecovery(): RecoverySnapshot? {
+        val sdkRecovery = if (directSdk.isAvailable) runCatching { directSdk.readStepsAndGoals() }.getOrNull() else null
+        if (sdkRecovery != null) {
+            val tip = when {
+                (sdkRecovery.sleepMinutes ?: 480) < 390 -> "Sleep was under 6.5 hours: consider reducing target RPE by 0.5 today."
+                sdkRecovery.steps > 18_000 -> "Step load is high: consider reducing target RPE by 0.5 or using machine and cable alternatives to heavy spinal-loading lifts."
+                else -> "Recovery context synced. Follow planned RPE and adjust based on warm-up sets."
+            }
+            return RecoverySnapshot(sdkRecovery.sleepMinutes, sdkRecovery.heartRate, tip)
+        }
+        return readRecoveryFromHealthConnect()
+    }
+
+    private suspend fun readRecoveryFromHealthConnect(): RecoverySnapshot? = runCatching {
         val client = manager.clientOrNull() ?: return null
         val granted = client.permissionController.getGrantedPermissions()
         val useSamsung = preferences.preferSamsungHealthOrigin.first()
@@ -124,3 +137,17 @@ class SamsungHealthRepository(
 
     companion object { const val SAMSUNG_HEALTH_PACKAGE = "com.sec.android.app.shealth" }
 }
+
+
+
+/** Used when the separately licensed Samsung AAR has not been installed locally. */
+class SamsungHealthDataSdkFallback : SamsungHealthDataSdkDataSource {
+    override val isAvailable: Boolean = false
+    override suspend fun requestPermissions(activity: android.app.Activity): Boolean = false
+    override suspend fun readStepsAndGoals(): SamsungSdkDailyData? = null
+}
+
+fun createSamsungHealthDataSdkDataSource(context: Context): SamsungHealthDataSdkDataSource = runCatching {
+    val adapterClass = Class.forName("com.pulsefit.app.SamsungHealthDataSdkAdapter")
+    adapterClass.getConstructor(Context::class.java).newInstance(context) as SamsungHealthDataSdkDataSource
+}.getOrElse { SamsungHealthDataSdkFallback() }

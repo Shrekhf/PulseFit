@@ -3,3 +3,6 @@
 local.properties
 .idea/
 *.iml
+
+# Samsung Health Data SDK is downloaded separately under Samsung's terms
+app/libs/samsung-health-data-api-*.aar

@@ -33,3 +33,7 @@ The APK is generated at `app/build/outputs/apk/debug/app-debug.apk`. GitHub Acti
 The app runs without an account or network connection for logging, workouts, manual steps, and local estimates. Gemini analysis is opt-in: add a key in Profile, then tap Analyze. That action sends the entered description and selected image to Google's Gemini API. The key is stored locally in DataStore. Meal photos are not uploaded until analysis is requested. Nutrition estimates are approximate and should be reviewed.
 
 Health Connect step access requires the user to grant Steps read permission. If it is unavailable, the phone's hardware step counter or manual step adjustment can be used. The phone sensor is active while the app is in the foreground.
+
+## Samsung Health Data SDK (optional local dependency)
+
+The Samsung Health Data SDK AAR is distributed by Samsung and is not committed to this public repository. Download `samsung-health-data-api-1.1.0.aar` from the [Samsung Health Data SDK page](https://developer.samsung.com/health/data/overview.html) and place it at `app/libs/samsung-health-data-api-1.1.0.aar` before building. Samsung Health SDK access requires Samsung Health 6.30.2+ and Android 10+; the SDK does not support emulators. Samsung says apps distributed for general use need an approved partner registration; unregistered apps work only with Samsung Health developer mode. Health Connect remains the automatic fallback.
