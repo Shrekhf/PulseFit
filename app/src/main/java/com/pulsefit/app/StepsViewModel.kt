@@ -30,8 +30,24 @@ class StepsViewModel(application: Application) : AndroidViewModel(application) {
     private val repo = SamsungHealthRepository(application)
     private val dao = PulseFitDatabase.get(application).dao()
     private val prefs = application.pulseFitPrefs
+    private var selectedDate = LocalDate.now().toString()
     private val _state = MutableStateFlow(StepsUiState(sdkAvailable = repo.samsungSdkDataSource.isAvailable))
     val state: StateFlow<StepsUiState> = _state.asStateFlow()
+
+    fun setDate(date: String) = viewModelScope.launch {
+        val parsed = runCatching { LocalDate.parse(date) }.getOrNull() ?: return@launch
+        selectedDate = date
+        if (date == LocalDate.now().toString()) refresh() else {
+            val sdkData = if (repo.samsungSdkDataSource.isAvailable) runCatching { repo.samsungSdkDataSource.readStepsAndGoals(parsed) }.getOrNull() else null
+            val healthData = if (sdkData == null) repo.readDay(parsed) else null
+            val synced = sdkData?.let { SamsungHealthSnapshot(it.steps, fromSamsungHealth = true, averageHeartRate = it.heartRate, sleepMinutes = it.sleepMinutes, stepGoal = it.stepGoal, activeCaloriesGoal = it.activeCaloriesGoal, energyScore = it.energyScore) } ?: healthData
+            val localLog = dao.dailyLog(date).first()
+            val steps = synced?.steps ?: localLog?.steps ?: 0
+            if (synced != null) dao.putDailyLog(DailyLogEntity(date, steps))
+            val previous = _state.value.snapshot
+            _state.value = _state.value.copy(snapshot = SamsungHealthSnapshot(steps = steps, fromSamsungHealth = synced?.fromSamsungHealth ?: (previous?.fromSamsungHealth == true)), status = if (synced != null) "Historical Health Connect data saved locally · $date" else "Historical local record · $date")
+        }
+    }
 
     init {
         viewModelScope.launch {
@@ -47,7 +63,7 @@ class StepsViewModel(application: Application) : AndroidViewModel(application) {
         val recovery = repo.readRecovery()
         val selected = sdkData?.let { SamsungHealthSnapshot(it.steps, fromSamsungHealth = true, averageHeartRate = it.heartRate, sleepMinutes = it.sleepMinutes, stepGoal = it.stepGoal, activeCaloriesGoal = it.activeCaloriesGoal, energyScore = it.energyScore) } ?: data
         if (selected != null) {
-            if (selected.steps > 0) dao.putDailyLog(DailyLogEntity(LocalDate.now().toString(), selected.steps))
+            if (selected.steps > 0 && selectedDate == LocalDate.now().toString()) dao.putDailyLog(DailyLogEntity(selectedDate, selected.steps))
             prefs.edit { p ->
                 selected.activeCalories?.let { p[intPreferencesKey("wearable_active_calories")] = it }
                 if (sdkData == null && selected.activeCalories == null) p.remove(intPreferencesKey("wearable_active_calories"))
@@ -69,7 +85,7 @@ class StepsViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit { it[stringPreferencesKey("calibration")] = value }
         _state.value = _state.value.copy(calibrationMode = value)
     }
-    fun setSteps(value: Int) = viewModelScope.launch { dao.putDailyLog(DailyLogEntity(LocalDate.now().toString(), value.coerceAtLeast(0))); _state.value = _state.value.copy(status = "Step count saved locally") }
+    fun setSteps(value: Int) = viewModelScope.launch { dao.putDailyLog(DailyLogEntity(selectedDate, value.coerceAtLeast(0))); _state.value = _state.value.copy(snapshot = _state.value.snapshot?.copy(steps = value.coerceAtLeast(0)), status = "Step count saved locally") }
     fun addSteps(delta: Int, current: Int) = setSteps((current + delta).coerceAtLeast(0))
     fun setBenchmark() = setSteps(15_000)
     fun importExport(uri: Uri) = viewModelScope.launch {

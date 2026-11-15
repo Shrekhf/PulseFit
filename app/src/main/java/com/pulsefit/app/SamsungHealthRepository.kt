@@ -51,7 +51,7 @@ object StepBurnCalculator {
 interface SamsungHealthDataSdkDataSource {
     val isAvailable: Boolean
     suspend fun requestPermissions(activity: Activity): Boolean
-    suspend fun readStepsAndGoals(): SamsungSdkDailyData?
+    suspend fun readStepsAndGoals(date: LocalDate = LocalDate.now()): SamsungSdkDailyData?
 }
 data class SamsungSdkDailyData(val steps: Int, val stepGoal: Int?, val activeCaloriesGoal: Int?, val energyScore: Int?, val sleepMinutes: Int?, val heartRate: Int?)
 
@@ -68,11 +68,13 @@ class SamsungHealthRepository(
         (context.applicationContext as android.app.Application).pulseFitPrefs.edit { it[PREFER_SAMSUNG_HEALTH_ORIGIN] = !include }
     }
 
-    suspend fun readToday(): SamsungHealthSnapshot? = runCatching {
+    suspend fun readToday(): SamsungHealthSnapshot? = readDay(LocalDate.now())
+
+    suspend fun readDay(day: LocalDate): SamsungHealthSnapshot? = runCatching {
         val client = manager.clientOrNull() ?: return null
         val granted = client.permissionController.getGrantedPermissions()
         if (androidx.health.connect.client.permission.HealthPermission.getReadPermission(StepsRecord::class) !in granted) return null
-        val end = Instant.now(); val zone = ZoneId.systemDefault(); val start = LocalDate.now(zone).atStartOfDay(zone).toInstant()
+        val zone = ZoneId.systemDefault(); val start = day.atStartOfDay(zone).toInstant(); val end = day.plusDays(1).atStartOfDay(zone).toInstant()
         val samsungOnly = preferences.preferSamsungHealthOrigin.first()
         fun <T : androidx.health.connect.client.records.Record> request(type: kotlin.reflect.KClass<T>, permission: kotlin.reflect.KClass<*>) = ReadRecordsRequest(
             recordType = type,
@@ -144,7 +146,7 @@ class SamsungHealthRepository(
 class SamsungHealthDataSdkFallback : SamsungHealthDataSdkDataSource {
     override val isAvailable: Boolean = false
     override suspend fun requestPermissions(activity: android.app.Activity): Boolean = false
-    override suspend fun readStepsAndGoals(): SamsungSdkDailyData? = null
+    override suspend fun readStepsAndGoals(date: LocalDate): SamsungSdkDailyData? = null
 }
 
 fun createSamsungHealthDataSdkDataSource(context: Context): SamsungHealthDataSdkDataSource = runCatching {

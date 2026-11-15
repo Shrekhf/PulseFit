@@ -26,12 +26,12 @@ class SamsungHealthDataSdkAdapter(private val context: Context) : SamsungHealthD
         store.requestPermissions(permissions, activity).isNotEmpty()
     }.getOrDefault(false)
 
-    override suspend fun readStepsAndGoals(): SamsungSdkDailyData? = runCatching {
+    override suspend fun readStepsAndGoals(date: LocalDate): SamsungSdkDailyData? = runCatching {
         if (!isAvailable) return null
         val granted = store.getGrantedPermissions(permissions)
         fun hasReadPermission(dataType: com.samsung.android.sdk.health.data.request.DataType) = com.samsung.android.sdk.health.data.permission.Permission.of(dataType, com.samsung.android.sdk.health.data.permission.AccessType.READ) in granted
         if (!hasReadPermission(com.samsung.android.sdk.health.data.request.DataTypes.STEPS)) return null
-        val today = LocalDate.now()
+        val today = date
         val start = today.atStartOfDay()
         val end = today.plusDays(1).atStartOfDay()
         val stepsRequest = com.samsung.android.sdk.health.data.request.DataType.StepsType.TOTAL.requestBuilder

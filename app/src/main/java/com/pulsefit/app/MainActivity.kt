@@ -27,6 +27,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,14 +36,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -100,6 +106,17 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
         if (grants.isNotEmpty()) scope.launch { snackbar.showSnackbar("Health Connect permissions updated"); stepsVm.refresh() }
         else scope.launch { snackbar.showSnackbar("No Health Connect permissions granted") }
     }
+    val backupExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) scope.launch { runCatching { PulseFitBackup.export(context, uri) }.onSuccess { snackbar.showSnackbar("PulseFit backup exported") }.onFailure { snackbar.showSnackbar("Backup export failed: ${it.message}") } }
+    }
+    val backupImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch { runCatching { PulseFitBackup.restore(context, uri) }.onSuccess { snackbar.showSnackbar("Backup restored") }.onFailure { snackbar.showSnackbar("Restore failed: ${it.message}") } }
+    }
+    LaunchedEffect(state.date) {
+        workoutVm.setDate(state.date)
+        mealVm.setDate(state.date)
+        stepsVm.setDate(state.date)
+    }
     DisposableEffect(lifecycle, sensorEnabled) {
         val tracker = if (sensorEnabled) StepCounterTracker(context.applicationContext, vm) else null
         val observer = LifecycleEventObserver { _, event ->
@@ -117,7 +134,7 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
             }
         }) { pad ->
             Column(Modifier.fillMaxSize().padding(pad)) {
-                TopBar(workoutState.remainingSeconds, workoutState.timerTargetElapsedMs > 0L, workoutState.timerMuted, workoutVm::toggleTimer, workoutVm::resetTimer, workoutVm::toggleMute, { showProfile = true })
+                TopBar(state.date, vm::selectDate, workoutState.remainingSeconds, workoutState.timerTargetElapsedMs > 0L, workoutState.timerMuted, workoutVm::toggleTimer, workoutVm::resetTimer, workoutVm::toggleMute, { showProfile = true })
                 when (tab) {
                     0 -> Dashboard(state, onWorkout = { tab = 1 }, onMeals = { tab = 2 }, onSteps = { tab = 3 }, onProfile = { showProfile = true })
                     1 -> WorkoutScreen(workoutVm, onFeedback = { scope.launch { snackbar.showSnackbar(it) } })
@@ -132,7 +149,7 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
                 }
             }
         }
-        if (showProfile) ProfileSheet(state.settings, onDismiss = { showProfile = false }, onSave = { vm.saveSettings(it); showProfile = false; scope.launch { snackbar.showSnackbar("Targets saved") } })
+        if (showProfile) ProfileSheet(state.settings, onDismiss = { showProfile = false }, onSave = { vm.saveSettings(it); showProfile = false; scope.launch { snackbar.showSnackbar("Settings saved") } }, onExport = { backupExport.launch("pulsefit-backup-${state.date}.json") }, onImport = { backupImport.launch(arrayOf("application/json", "text/json", "text/plain")) })
     }
 }
 
@@ -145,6 +162,7 @@ private class StepCounterTracker(context: android.content.Context, private val v
     override fun onSensorChanged(event: SensorEvent) {
         val raw = event.values.firstOrNull()?.toInt() ?: return
         val today = LocalDate.now().toString()
+        if (vm.state.value.date != today) return
         var baseline = prefs.getInt("baseline", -1)
         val savedDate = prefs.getString("date", "")
         if (baseline < 0 || savedDate != today || raw < baseline) {
@@ -157,8 +175,9 @@ private class StepCounterTracker(context: android.content.Context, private val v
 }
 
 @Composable
-private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () -> Unit, reset: () -> Unit, toggleMute: () -> Unit, profile: () -> Unit) {
-    Row(Modifier.fillMaxWidth().background(Color(0xFF101827)).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds: Int, running: Boolean, muted: Boolean, toggle: () -> Unit, reset: () -> Unit, toggleMute: () -> Unit, profile: () -> Unit) {
+    Column(Modifier.fillMaxWidth().background(Color(0xFF101827)).padding(horizontal = 10.dp, vertical = 6.dp)) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Emerald), Alignment.Center) { Icon(Icons.Default.Favorite, null, tint = Bg) }
             Column { Text("PulseFit AI", color = White, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text("COACH · VISION · HEALTH", color = Emerald, fontWeight = FontWeight.Bold, fontSize = 8.sp, letterSpacing = 1.sp) }
@@ -171,6 +190,19 @@ private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () ->
             IconButton(onClick = profile, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Person, "Profile and targets", tint = Emerald) }
         }
     }
+    val selected = LocalDate.parse(selectedDate)
+    LazyRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp), contentPadding = PaddingValues(top = 5.dp)) {
+        items((6 downTo 0).map { LocalDate.now().minusDays(it.toLong()) }) { date ->
+            val active = date == selected
+            Surface(Modifier.width(42.dp).clip(RoundedCornerShape(10.dp)).clickable { onSelectDate(date.toString()) }, shape = RoundedCornerShape(10.dp), color = if (active) Emerald else Raised) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (date == LocalDate.now()) "Today" else date.dayOfWeek.name.take(3).lowercase().replaceFirstChar(Char::uppercase), color = if (active) Bg else Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    Text(date.dayOfMonth.toString(), color = if (active) Bg else White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+    }
 }
 
 @Composable private fun ScrollPage(content: @Composable ColumnScope.() -> Unit) {
@@ -180,6 +212,10 @@ private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () ->
 @Composable private fun Dashboard(s: PulseFitUiState, onWorkout: () -> Unit, onMeals: () -> Unit, onSteps: () -> Unit, onProfile: () -> Unit) {
     ScrollPage {
         Text(LocalDate.parse(s.date).let { "${it.dayOfWeek.name.lowercase().replaceFirstChar(Char::uppercase)}, ${it.month.name.lowercase().replaceFirstChar(Char::uppercase)} ${it.dayOfMonth}" }, color = White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(color = Raised, shape = RoundedCornerShape(50)) { Text("🔥 ${s.stepStreak}-day 15k Step Streak", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), color = Emerald, fontSize = 10.sp) }
+            Surface(color = Raised, shape = RoundedCornerShape(50)) { Text("🏋 ${s.gymStreak}-day Gym Split Streak", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), color = Cyan, fontSize = 10.sp) }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatCard("NET CALORIE BUDGET", "${s.remaining}", "kcal remaining", Emerald, Modifier.weight(1f), "${s.intake} eaten · ${s.stepBurn + s.workoutBurn} active", s.remaining.toFloat() / s.settings.calorieTarget.coerceAtLeast(1))
             StatCard("HEALTH STEPS", "%s".format(s.steps.toString().reversed().chunked(3).joinToString(",").reversed()), "of ${s.settings.stepGoal}", Cyan, Modifier.weight(1f), "${s.stepBurn} calibrated kcal", s.steps.toFloat() / s.settings.stepGoal.coerceAtLeast(1))
@@ -188,6 +224,8 @@ private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () ->
         SurfaceCard {
             MacroBar("Protein", s.protein, s.settings.proteinTarget, Emerald); MacroBar("Carbs", s.carbs, s.settings.carbTarget, Cyan); MacroBar("Fat", s.fat, s.settings.fatTarget, Color(0xFFFBBF24))
         }
+        Text("Weekly energy · Mon–Sun", color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        SurfaceCard { WeeklyEnergyChart(s.week) }
         ActionHeading("Today's workout", "Open planner", onWorkout)
         SurfaceCard { Text(s.splits.firstOrNull { it.id == s.selectedSplitId }?.name ?: "5-Day Bro Split", color = Emerald, fontWeight = FontWeight.Bold, fontSize = 11.sp); Text(s.exercises.firstOrNull()?.name ?: "Select today's training day", color = White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold); Text("${s.workoutBurn} kcal from completed sets · tap to plan", color = Muted, fontSize = 11.sp, modifier = Modifier.clickable(onClick = onWorkout)) }
         ActionHeading("Meal diary · ${s.meals.size}", "Scan / log", onMeals)
@@ -206,6 +244,40 @@ private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () ->
 @Composable private fun ActionHeading(title: String, action: String, click: () -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text(title, color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp); Text(action, color = Emerald, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.clickable(onClick = click).padding(4.dp)) } }
 @Composable private fun SurfaceCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) { Column(modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Card).padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content) }
 @Composable private fun Progress(value: Float, color: Color) { Box(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape).background(Raised)) { Box(Modifier.fillMaxWidth(value.coerceIn(0f, 1f)).fillMaxHeight().clip(CircleShape).background(color)) } }
+
+@Composable private fun WeeklyEnergyChart(points: List<DailyChartPoint>) {
+    val maxValue = (points.maxOfOrNull { maxOf(it.intake, it.burn) } ?: 1).coerceAtLeast(1).toFloat()
+    val animated = points.mapIndexed { index, point ->
+        val intake by animateFloatAsState((point.intake / maxValue).coerceIn(0f, 1f), tween(500), label = "intake-$index")
+        val burn by animateFloatAsState((point.burn / maxValue).coerceIn(0f, 1f), tween(500), label = "burn-$index")
+        point to (intake to burn)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(8.dp).background(Emerald, CircleShape)); Text(" Intake", color = Muted, fontSize = 9.sp) }
+            Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(8.dp).background(Cyan, CircleShape)); Text(" Active burn", color = Muted, fontSize = 9.sp) }
+        }
+        Canvas(Modifier.fillMaxWidth().height(150.dp)) {
+            val base = size.height - 19.dp.toPx()
+            val plotHeight = size.height - 28.dp.toPx()
+            val groupWidth = size.width / points.size.coerceAtLeast(1)
+            repeat(4) { row ->
+                val y = plotHeight * row / 3f
+                drawLine(Color(0x22334455), Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
+            }
+            animated.forEachIndexed { index, (point, bars) ->
+                val x = groupWidth * index + groupWidth * .25f
+                val barWidth = groupWidth * .22f
+                val intake = bars.first
+                val burn = bars.second
+                drawRoundRect(Emerald, Offset(x, base - plotHeight * intake), androidx.compose.ui.geometry.Size(barWidth, plotHeight * intake), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()))
+                drawRoundRect(Cyan, Offset(x + barWidth + 3.dp.toPx(), base - plotHeight * burn), androidx.compose.ui.geometry.Size(barWidth, plotHeight * burn), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()))
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) { points.forEach { Text(LocalDate.parse(it.date).dayOfWeek.name.take(3), color = Muted, fontSize = 8.sp) } }
+        Text("Daily calorie intake compared with calibrated steps plus completed workout burn", color = Muted, fontSize = 9.sp)
+    }
+}
 
 @Composable private fun NumberField(label: String, value: String, update: (String) -> Unit) { OutlinedTextField(value, update, label = { Text(label) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = White, unfocusedTextColor = White, focusedBorderColor = Emerald, unfocusedBorderColor = Muted, focusedLabelColor = Emerald, unfocusedLabelColor = Muted), modifier = Modifier.fillMaxWidth()) }
 
@@ -234,14 +306,14 @@ private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () ->
     }
 }
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun ProfileSheet(settings: Settings, onDismiss: () -> Unit, onSave: (Settings) -> Unit) {
+@Composable private fun ProfileSheet(settings: Settings, onDismiss: () -> Unit, onSave: (Settings) -> Unit, onExport: () -> Unit, onImport: () -> Unit) {
     var calories by remember(settings) { mutableStateOf(settings.calorieTarget.toString()) }; var protein by remember(settings) { mutableStateOf(settings.proteinTarget.toString()) }; var carbs by remember(settings) { mutableStateOf(settings.carbTarget.toString()) }; var fat by remember(settings) { mutableStateOf(settings.fatTarget.toString()) }
-    var age by remember { mutableStateOf("30") }; var height by remember { mutableStateOf("175") }; var weight by remember { mutableStateOf("75") }; var sex by remember { mutableStateOf("Male") }; var activity by remember { mutableStateOf(1.45f) }; var goal by remember { mutableStateOf("Maintenance") }; var key by remember(settings) { mutableStateOf(settings.geminiKey) }
+    var age by remember { mutableStateOf("30") }; var height by remember { mutableStateOf("175") }; var weight by remember { mutableStateOf("75") }; var sex by remember { mutableStateOf("Male") }; var activity by remember { mutableStateOf(1.45f) }; var goal by remember { mutableStateOf("Maintenance") }; var key by remember(settings) { mutableStateOf(settings.geminiKey) }; var preferSamsung by remember(settings) { mutableStateOf(settings.preferSamsungOrigin) }; var autoWrite by remember(settings) { mutableStateOf(settings.autoWriteSamsung) }; var revealKey by remember { mutableStateOf(false) }
     val tdee = remember(age, height, weight, sex, activity) { val w = weight.toFloatOrNull() ?: 75f; val h = height.toFloatOrNull() ?: 175f; val a = age.toIntOrNull() ?: 30; ((10*w + 6.25f*h - 5*a + if (sex == "Male") 5 else -161) * activity).toInt() }
     val recommended = when (goal) { "Cut" -> tdee - 350; "Lean Bulk" -> tdee + 200; "Recomp" -> tdee - 100; else -> tdee }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Card) {
         LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            item { Text("Profile & TDEE", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+            item { Text("Settings & profile", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { NumberField("Age", age, { age = it }); NumberField("Height cm", height, { height = it }); NumberField("Weight kg", weight, { weight = it }) } }
             item { Row { listOf("Male", "Female").forEach { FilterChip(selected = sex == it, onClick = { sex = it }, label = { Text(it) }) } } }
             item { Text("Activity factor ${"%.2f".format(activity)}", color = Muted); Slider(activity, { activity = it }, valueRange = 1.2f..1.9f) }
@@ -249,9 +321,21 @@ private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () ->
             item { Text("Estimated TDEE $tdee kcal · $goal target $recommended kcal", color = Emerald, fontWeight = FontWeight.Bold) }
             item { NumberField("Daily calorie target", calories, { calories = it }) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { NumberField("Protein g", protein, { protein = it }); NumberField("Carbs g", carbs, { carbs = it }); NumberField("Fat g", fat, { fat = it }) } }
-            item { NumberField("Gemini API key (optional)", key, { key = it }) }
-            item { Text("The key is stored locally in DataStore. This build does not transmit it or call Gemini.", color = Muted, fontSize = 10.sp) }
-            item { Button(onClick = { onSave(settings.copy(calorieTarget = calories.toIntOrNull() ?: settings.calorieTarget, proteinTarget = protein.toIntOrNull() ?: settings.proteinTarget, carbTarget = carbs.toIntOrNull() ?: settings.carbTarget, fatTarget = fat.toIntOrNull() ?: settings.fatTarget, geminiKey = key)) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg)) { Text("Save profile & targets") } }
+            item { OutlinedTextField(key, { key = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Gemini API key (optional)") }, visualTransformation = if (revealKey) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(), trailingIcon = { TextButton(onClick = { revealKey = !revealKey }) { Text(if (revealKey) "Hide" else "Show") } }) }
+            item { Text("Gemini 2.5 Flash is called only when you analyze a meal or request a workout coach note. Your key is stored locally in DataStore; prompts and selected meal photos are sent to Google for those requests.", color = Muted, fontSize = 10.sp) }
+            item { SettingSwitch("Prefer Samsung Health data origin", "com.sec.android.app.shealth records first", preferSamsung) { preferSamsung = it } }
+            item { SettingSwitch("Auto-write meals & workouts", "Send logged nutrition and finished workouts to Health Connect", autoWrite) { autoWrite = it } }
+            item { Text("JSON backup", color = Cyan, fontWeight = FontWeight.Bold) }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = onExport, modifier = Modifier.weight(1f)) { Text("Export all data") }; OutlinedButton(onClick = onImport, modifier = Modifier.weight(1f)) { Text("Restore backup") } } }
+            item { Text("Restore replaces the app's Room data. Settings and API key remain on this device.", color = Muted, fontSize = 10.sp) }
+            item { Button(onClick = { onSave(settings.copy(calorieTarget = calories.toIntOrNull() ?: settings.calorieTarget, proteinTarget = protein.toIntOrNull() ?: settings.proteinTarget, carbTarget = carbs.toIntOrNull() ?: settings.carbTarget, fatTarget = fat.toIntOrNull() ?: settings.fatTarget, geminiKey = key.trim(), preferSamsungOrigin = preferSamsung, autoWriteSamsung = autoWrite)) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg)) { Text("Save settings & targets") } }
         }
+    }
+}
+
+@Composable private fun SettingSwitch(title: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) { Text(title, color = White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold); Text(detail, color = Muted, fontSize = 10.sp) }
+        Switch(checked, onChange)
     }
 }

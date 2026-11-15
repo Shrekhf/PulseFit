@@ -17,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import com.google.ai.client.generativeai.GenerativeModel
 
 data class ExerciseSeed(val name: String, val sets: Int = 4, val reps: String = "8–12", val rest: Int = 90, val equipment: String = "Full Commercial Gym", val jointNote: String = "Use a smooth, pain-free range of motion.")
 data class DaySeed(val focus: String, val notes: String, val burn: Int, val exercises: List<ExerciseSeed>)
@@ -66,11 +67,11 @@ object SplitGenerator {
 
 data class ExerciseSession(val exercise: ExerciseEntity, val sets: List<ExerciseSetEntity>)
 data class RecoverySnapshot(val sleepMinutes: Int? = null, val restingHeartRate: Int? = null, val autoRegulationTip: String? = null)
-private data class WorkoutInputs(val splitId: String, val selectedDay: Int, val splits: List<WorkoutSplitEntity>, val sets: List<ExerciseSetEntity>)
+private data class WorkoutInputs(val splitId: String, val selectedDay: Int, val date: String, val splits: List<WorkoutSplitEntity>, val sets: List<ExerciseSetEntity>)
 data class WorkoutUiState(
     val splits: List<WorkoutSplitEntity> = emptyList(), val selectedSplitId: String = "bro_split", val selectedDay: Int = LocalDate.now().dayOfWeek.value - 1,
     val days: List<WorkoutDayEntity> = emptyList(), val day: WorkoutDayEntity? = null, val exercises: List<ExerciseSession> = emptyList(),
-    val remainingSeconds: Int = 90, val timerTargetElapsedMs: Long = 0L, val timerMuted: Boolean = false, val equipment: String = "Full Commercial Gym", val totalVolume: Long = 0L, val healthSyncStatus: String? = null
+    val remainingSeconds: Int = 90, val timerTargetElapsedMs: Long = 0L, val timerMuted: Boolean = false, val equipment: String = "Full Commercial Gym", val totalVolume: Long = 0L, val healthSyncStatus: String? = null, val coachNote: String? = null, val coachLoading: Boolean = false
 )
 
 class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
@@ -78,7 +79,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.pulseFitPrefs
     private val healthSyncBridge = HealthSyncBridge(app)
     private val samsungHealthRepository = SamsungHealthRepository(app)
-    private val today = LocalDate.now().toString()
+    private val selectedDate = MutableStateFlow(LocalDate.now().toString())
     private val splitId = prefs.data.map { it[stringPreferencesKey("active_split")] ?: "bro_split" }.stateIn(viewModelScope, SharingStarted.Eagerly, "bro_split")
     private val selectedDay = MutableStateFlow(LocalDate.now().dayOfWeek.value - 1)
     private val equipment = MutableStateFlow("Full Commercial Gym")
@@ -89,11 +90,13 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private var activeWorkoutStartMs: Long? = null
     private var lastAutoSyncKey: String? = null
     private val _healthSyncStatus = MutableStateFlow<String?>(null)
+    private val _coachNote = MutableStateFlow<String?>(null)
+    private val _coachLoading = MutableStateFlow(false)
     private val _recoverySnapshot = MutableStateFlow<RecoverySnapshot?>(null)
     val recoverySnapshot: StateFlow<RecoverySnapshot?> = _recoverySnapshot
     fun refreshRecovery() = viewModelScope.launch { _recoverySnapshot.value = samsungHealthRepository.readRecovery() }
 
-    private val workoutContent: Flow<WorkoutUiState> = combine(splitId, selectedDay, dao.splits(), dao.exerciseSets(today)) { id, dayIndex, splits, sets -> WorkoutInputs(id, dayIndex, splits, sets) }
+    private val workoutContent: Flow<WorkoutUiState> = combine(splitId, selectedDay, selectedDate, dao.splits(), dao.allExerciseSets()) { id, dayIndex, date, splits, allSets -> WorkoutInputs(id, dayIndex, date, splits, allSets.filter { it.date == date }) }
         .flatMapLatest { input ->
             dao.workoutDays(input.splitId).flatMapLatest { days ->
                 val activeDay = days.firstOrNull { it.dayIndex == input.selectedDay }
@@ -108,6 +111,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<WorkoutUiState> = combine(workoutContent, timerTarget, timerMuted, equipment, now) { content, target, muted, gear, time ->
         content.copy(timerTargetElapsedMs = target, remainingSeconds = if (target > time) ((target - time + 999) / 1000).toInt() else if (target == 0L) pausedSeconds else 90, timerMuted = muted, equipment = gear)
     }.combine(_healthSyncStatus) { content, syncStatus -> content.copy(healthSyncStatus = syncStatus) }
+        .combine(_coachNote) { content, note -> content.copy(coachNote = note) }
+        .combine(_coachLoading) { content, loading -> content.copy(coachLoading = loading) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WorkoutUiState())
 
     init {
@@ -146,16 +151,33 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun ensureSets(rows: List<ExerciseSession>) {
         rows.forEach { session ->
-            val existing = dao.setsForExerciseOnce(today, session.exercise.id)
-            if (existing.isEmpty()) repeat(session.exercise.plannedSets) { n ->
-                dao.insertWorkoutSet(ExerciseSetEntity(date = today, exerciseName = session.exercise.name, exerciseId = session.exercise.id, setNumber = n + 1, setType = if (n == 0 && "warmup" in session.exercise.name.lowercase()) SetType.WARMUP else SetType.WORKING))
+            val existing = dao.setsForExerciseOnce(selectedDate.value, session.exercise.id)
+            if (existing.isEmpty() && selectedDate.value == LocalDate.now().toString()) repeat(session.exercise.plannedSets) { n ->
+                dao.insertWorkoutSet(ExerciseSetEntity(date = selectedDate.value, exerciseName = session.exercise.name, exerciseId = session.exercise.id, setNumber = n + 1, setType = if (n == 0 && "warmup" in session.exercise.name.lowercase()) SetType.WARMUP else SetType.WORKING))
             }
         }
     }
 
     fun chooseSplit(id: String) { viewModelScope.launch { prefs.edit { it[stringPreferencesKey("active_split")] = id }; selectedDay.value = 0 } }
+    fun setDate(value: String) { runCatching { LocalDate.parse(value) }.onSuccess { selectedDate.value = value; selectedDay.value = it.dayOfWeek.value - 1; _coachNote.value = null } }
     fun chooseDay(day: Int) { selectedDay.value = day.coerceIn(0, 6) }
     fun chooseEquipment(value: String) { equipment.value = value }
+    fun requestAiCoach() = viewModelScope.launch {
+        _coachLoading.value = true
+        val current = state.value
+        val recovery = _recoverySnapshot.value
+        val key = prefs.data.first()[stringPreferencesKey("gemini_key")].orEmpty()
+        val offline = when {
+            (recovery?.sleepMinutes ?: 480) < 390 -> "Sleep was under 6.5 hours. Keep 2–3 reps in reserve, lower today's RPE target by 0.5, and avoid grinding reps."
+            else -> "Follow today's plan with controlled reps. Keep 1–3 reps in reserve and stop any movement that causes joint pain."
+        }
+        _coachNote.value = if (key.isBlank()) offline else runCatching {
+            GenerativeModel(modelName = "gemini-2.5-flash", apiKey = key).generateContent(
+                "Give concise, safety-minded coaching for ${current.day?.focus ?: "today's training"}. Planned exercises: ${current.exercises.joinToString { it.exercise.name }}. Session volume so far: ${current.totalVolume} lb. Sleep: ${recovery?.sleepMinutes ?: "unknown"} minutes; average/resting heart rate: ${recovery?.restingHeartRate ?: "unknown"} bpm. Return a short actionable note; avoid medical claims."
+            ).text?.takeIf { it.isNotBlank() } ?: offline
+        }.getOrDefault(offline)
+        _coachLoading.value = false
+    }
     fun updateSet(set: ExerciseSetEntity) = viewModelScope.launch { dao.updateSet(set.copy(weight = set.weightLbs, type = set.setType.name.lowercase().replaceFirstChar(Char::uppercase), legacyCompleted = set.isCompleted)) }
     fun cycleSetType(set: ExerciseSetEntity) {
         val next = when (set.setType) { SetType.WARMUP -> SetType.WORKING; SetType.WORKING -> SetType.DROP; SetType.DROP -> SetType.FAILURE; SetType.FAILURE -> SetType.WORKING }
@@ -167,6 +189,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         if (completed) startTimer(restSeconds)
     }
     fun finishAndSyncWorkout(dayId: String? = state.value.day?.id) = viewModelScope.launch {
+        if (selectedDate.value != LocalDate.now().toString()) return@launch
         val current = state.value
         val day = current.day ?: return@launch
         if (dayId == null || lastAutoSyncKey == dayId) return@launch

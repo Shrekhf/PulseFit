@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,6 +56,7 @@ private val MealWhite = Color(0xFFF8FAFC)
     var title by remember(state.title) { mutableStateOf(state.title) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var slot by remember { mutableStateOf("Dinner") }
+    LaunchedEffect(state.editingMealId, state.editingSlot) { if (state.editingMealId != null) slot = state.editingSlot ?: slot }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) runCatching { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } }.onSuccess { bitmap = it }.onFailure { onToast("Could not open that photo") }
     }
@@ -79,7 +81,7 @@ private val MealWhite = Color(0xFFF8FAFC)
         Card(colors = CardDefaults.cardColors(containerColor = MealCard), shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 OutlinedTextField(prompt, { prompt = it }, modifier = Modifier.fillMaxWidth(), minLines = 2, label = { Text("Meal and customizations") })
-                OutlinedTextField(title, { title = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Meal title") })
+                OutlinedTextField(title, { title = it; vm.updateTitle(it) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Meal title") })
                 Button(enabled = !state.analyzing, onClick = { scope.launch {
                     vm.setAnalyzing(true)
                     val result = analyzer.analyze(context, dashboard.settings.geminiKey, prompt, bitmap)
@@ -121,12 +123,12 @@ private val MealWhite = Color(0xFFF8FAFC)
                 }
                 Text("${total.protein}g protein · ${total.carbs}g carbs · ${total.fat}g fat", color = MealCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { listOf("Breakfast", "Lunch", "Dinner", "Snack").forEach { FilterChip(slot == it, { slot = it }, label = { Text(it, fontSize = 9.sp) }) } }
-                Button(onClick = { vm.logMeal(slot) { status -> onToast("$title logged · ${total.kcal} kcal · $status") } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) { Text("Log meal · ${total.kcal} kcal") }
+                Button(onClick = { vm.logMeal(slot) { status -> onToast("$title saved · ${total.kcal} kcal · $status") } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) { Text(if (state.editingMealId != null) "Save meal edits · ${total.kcal} kcal" else "Log meal · ${total.kcal} kcal") }
                 state.syncStatus?.let { Text(it, color = if (it.startsWith("Synced")) MealGreen else MealMuted, fontSize = 10.sp) }
             }
         }
-        Text("TODAY'S MEALS", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        dashboard.meals.forEach { meal -> Card(colors = CardDefaults.cardColors(containerColor = MealCard)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("${meal.slot} · ${meal.name}", color = MealWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp); Text("${meal.protein}P · ${meal.carbs}C · ${meal.fat}F", color = MealMuted, fontSize = 10.sp) }; Text("${meal.kcal} kcal", color = MealGreen) } } }
+        Text("MEALS · ${dashboard.date}", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        dashboard.meals.forEach { meal -> Card(colors = CardDefaults.cardColors(containerColor = MealCard)) { Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("${meal.slot} · ${meal.name}", color = MealWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp); Text("${meal.protein}P · ${meal.carbs}C · ${meal.fat}F", color = MealMuted, fontSize = 10.sp) }; Text("${meal.kcal} kcal", color = MealGreen, fontSize = 10.sp); IconButton(onClick = { vm.loadMealForEdit(meal.id); onToast("Loaded meal for editing") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Edit, "Edit meal", tint = MealCyan, modifier = Modifier.size(17.dp)) }; IconButton(onClick = { vm.deleteMeal(meal.id); onToast("Meal deleted") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete meal", tint = MealMuted, modifier = Modifier.size(17.dp)) } } } }
     }
 }
 

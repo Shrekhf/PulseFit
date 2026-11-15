@@ -57,6 +57,10 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
             Column(Modifier.padding(horizontal = 16.dp).padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("AI GYM PLANNER", color = WorkoutGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
                 Text("Train with a plan", color = WorkoutWhite, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                OutlinedButton(onClick = vm::requestAiCoach, enabled = !state.coachLoading, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (state.coachLoading) "Preparing coach note…" else "AI workout coach", color = WorkoutCyan)
+                }
+                state.coachNote?.let { Text(it, Modifier.fillMaxWidth().background(WorkoutCard, RoundedCornerShape(12.dp)).padding(12.dp), color = WorkoutWhite, fontSize = 12.sp) }
                 ExposedDropdownMenuBox(expanded = splitMenu, onExpandedChange = { splitMenu = it }) {
                     OutlinedTextField(value = state.splits.firstOrNull { it.id == state.selectedSplitId }?.name ?: "5-Day Bro Split", onValueChange = {}, readOnly = true, label = { Text("Training split") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(splitMenu) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = WorkoutWhite, unfocusedTextColor = WorkoutWhite, focusedBorderColor = WorkoutGreen, unfocusedBorderColor = WorkoutMuted, focusedLabelColor = WorkoutGreen, unfocusedLabelColor = WorkoutMuted))
                     ExposedDropdownMenu(expanded = splitMenu, onDismissRequest = { splitMenu = false }) {

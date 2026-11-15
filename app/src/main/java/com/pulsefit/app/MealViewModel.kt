@@ -15,16 +15,26 @@ data class IngredientDraft(
     val included: Boolean = true, val multiplier: Float = 1f, val portion: String = "1 serving"
 )
 data class MealAnalysis(val mealTitle: String, val confidence: Int, val ingredients: List<IngredientDraft>)
-data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null)
+data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null, val editingMealId: String? = null, val editingSlot: String? = null)
 
 class MealViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = PulseFitDatabase.get(application).dao()
     private val healthSyncBridge = HealthSyncBridge(application)
+    private var selectedDate: String = LocalDate.now().toString()
     private val _state = MutableStateFlow(MealScannerState(ingredients = parseMealOffline("chicken bowl with greens, rice, beans and sauce")))
     val state: StateFlow<MealScannerState> = _state.asStateFlow()
+    fun setDate(date: String) { if (runCatching { LocalDate.parse(date) }.isSuccess) selectedDate = date }
+    fun updateTitle(value: String) = mutate { copy(title = value) }
 
     fun updateIngredient(index: Int, ingredient: IngredientDraft) = mutate { copy(ingredients = ingredients.toMutableList().also { it[index] = ingredient }) }
     fun loadPreset(preset: MealPreset) { _state.value = MealScannerState(preset.title, 100, preset.ingredients) }
+    fun loadMealForEdit(id: String) = viewModelScope.launch {
+        val meal = dao.mealOnce(id) ?: return@launch
+        val rows = dao.ingredientsOnce(id).map { IngredientDraft(it.name, it.baseKcal, it.baseProtein, it.baseCarbs, it.baseFat, it.included, it.multiplier) }
+        selectedDate = meal.date
+        _state.value = MealScannerState(meal.name, 100, rows, editingMealId = meal.id, editingSlot = meal.slot)
+    }
+    fun deleteMeal(id: String) = viewModelScope.launch { dao.deleteMeal(id) }
     fun setAnalyzing(value: Boolean) = mutate { copy(analyzing = value, error = null) }
     fun setAnalysis(analysis: MealAnalysis) { _state.value = MealScannerState(analysis.mealTitle, analysis.confidence, analysis.ingredients) }
     fun fail(message: String) = mutate { copy(analyzing = false, error = message) }
@@ -43,12 +53,12 @@ class MealViewModel(application: Application) : AndroidViewModel(application) {
         val s = _state.value
         val rows = s.ingredients.filter { it.included }
         val total = IngredientTotals(rows.sumOf { (it.kcal * it.multiplier).toInt() }, rows.sumOf { (it.p * it.multiplier).toInt() }, rows.sumOf { (it.c * it.multiplier).toInt() }, rows.sumOf { (it.f * it.multiplier).toInt() })
-        val meal = MealEntity(date = LocalDate.now().toString(), slot = slot, name = s.title, kcal = total.kcal, protein = total.protein, carbs = total.carbs, fat = total.fat)
-        dao.insertMeal(meal)
+        val meal = MealEntity(id = s.editingMealId ?: java.util.UUID.randomUUID().toString(), date = selectedDate, slot = slot, name = s.title, kcal = total.kcal, protein = total.protein, carbs = total.carbs, fat = total.fat)
+        if (s.editingMealId != null) { dao.updateMeal(meal); dao.deleteIngredientsForMeal(meal.id) } else dao.insertMeal(meal)
         dao.insertIngredients(s.ingredients.map { IngredientItem(mealId = meal.id, name = it.name, baseKcal = it.kcal, baseProtein = it.p, baseCarbs = it.c, baseFat = it.f, multiplier = it.multiplier, included = it.included) })
-        val synced = runCatching { healthSyncBridge.writeMealToSamsungHealth(s.title, slot, total.kcal, total.protein, total.carbs, total.fat) }.getOrDefault(false)
+        val synced = s.editingMealId == null && selectedDate == LocalDate.now().toString() && runCatching { healthSyncBridge.writeMealToSamsungHealth(s.title, slot, total.kcal, total.protein, total.carbs, total.fat) }.getOrDefault(false)
         val status = if (synced) "Synced to Room + Samsung Health" else "Saved to Room · Health Connect sync unavailable or not permitted"
-        _state.value = _state.value.copy(syncStatus = status)
+        _state.value = _state.value.copy(syncStatus = status, editingMealId = null)
         onDone(status)
     }
     private inline fun mutate(block: MealScannerState.() -> MealScannerState) { _state.value = _state.value.block() }
