@@ -48,6 +48,7 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
     var expandedExercise by remember { mutableStateOf<String?>(null) }
     var swapTarget by remember { mutableStateOf<ExerciseEntity?>(null) }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { vm.refreshRecovery() }
     LaunchedEffect(state.healthSyncStatus) { state.healthSyncStatus?.let(onFeedback) }
 
     LazyColumn(Modifier.fillMaxSize().background(WorkoutBg), contentPadding = PaddingValues(bottom = 22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -114,7 +115,7 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("SAMSUNG HEALTH RECOVERY", color = WorkoutCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.7.sp)
-                Text(if (snapshot == null) "Recovery insights will appear here" else "${snapshot.sleepMinutes?.let { "${it / 60}h ${it % 60}m sleep" } ?: "Sleep unavailable"} · ${snapshot.restingHeartRate?.let { "$it bpm resting HR" } ?: "Resting HR unavailable"}", color = WorkoutWhite, fontSize = 11.sp)
+                Text(if (snapshot == null) "Recovery insights will appear here" else "${snapshot.sleepMinutes?.let { "${it / 60}h ${it % 60}m sleep" } ?: "Sleep unavailable"} · ${snapshot.restingHeartRate?.let { "$it bpm average HR" } ?: "Average HR unavailable"}", color = WorkoutWhite, fontSize = 11.sp)
             }
             Text(if (expanded) "⌃" else "⌄", color = WorkoutMuted)
         }

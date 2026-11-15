@@ -50,12 +50,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.PermissionController
-import androidx.health.connect.client.permission.HealthPermission
-import androidx.health.connect.client.records.StepsRecord
-import androidx.health.connect.client.request.AggregateRequest
-import androidx.health.connect.client.time.TimeRangeFilter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -88,6 +82,7 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     val workoutVm: WorkoutViewModel = viewModel()
     val mealVm: MealViewModel = viewModel()
+    val stepsVm: StepsViewModel = viewModel()
     val workoutState by workoutVm.state.collectAsState()
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current
@@ -100,18 +95,10 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
         sensorEnabled = granted
         vm.setHealthStatus(if (granted) "Step sensor enabled" else "Activity recognition declined · manual entry available")
     }
-    val healthClient = remember { runCatching { HealthConnectClient.getOrCreate(context) }.getOrNull() }
-    val stepsPermission = HealthPermission.getReadPermission(StepsRecord::class)
-    val healthLauncher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { grants ->
-        if (stepsPermission in grants) { vm.setHealthStatus("Connected · syncing steps"); scope.launch { syncSteps(healthClient, vm, snackbar) } }
-        else vm.setHealthStatus("Permission declined · manual entry remains available")
-    }
-    DisposableEffect(lifecycle, healthClient) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME && healthClient != null) scope.launch {
-            val granted = runCatching { healthClient.permissionController.getGrantedPermissions() }.getOrDefault(emptySet())
-            if (stepsPermission in granted) syncSteps(healthClient, vm, snackbar)
-        } }
-        lifecycle.lifecycle.addObserver(observer); onDispose { lifecycle.lifecycle.removeObserver(observer) }
+    val healthManager = remember { HealthConnectManager(context) }
+    val healthLauncher = rememberLauncherForActivityResult(HealthConnectManager.permissionContract()) { grants ->
+        if (grants.isNotEmpty()) scope.launch { snackbar.showSnackbar("Health Connect permissions updated"); stepsVm.refresh() }
+        else scope.launch { snackbar.showSnackbar("No Health Connect permissions granted") }
     }
     DisposableEffect(lifecycle, sensorEnabled) {
         val tracker = if (sensorEnabled) StepCounterTracker(context.applicationContext, vm) else null
@@ -135,10 +122,10 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
                     0 -> Dashboard(state, onWorkout = { tab = 1 }, onMeals = { tab = 2 }, onSteps = { tab = 3 }, onProfile = { showProfile = true })
                     1 -> WorkoutScreen(workoutVm, onFeedback = { scope.launch { snackbar.showSnackbar(it) } })
                     2 -> MealScannerScreen(state, mealVm, onToast = { scope.launch { snackbar.showSnackbar(it) } })
-                    else -> StepsScreen(state, vm, onConnect = {
-                        if (healthClient == null) scope.launch { snackbar.showSnackbar("Health Connect is not available on this device") }
-                        else healthLauncher.launch(setOf(stepsPermission))
-                    }, onSensor = {
+                    else -> StepsScreen(state, stepsVm, onConnectHealthConnect = {
+                        if (healthManager.clientOrNull() == null) scope.launch { snackbar.showSnackbar("Health Connect is not available on this device") }
+                        else healthLauncher.launch(healthManager.allPermissions)
+                    }, onEnableSensor = {
                         if (android.os.Build.VERSION.SDK_INT < 29 || ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED) sensorEnabled = true
                         else sensorPermissionLauncher.launch(android.Manifest.permission.ACTIVITY_RECOGNITION)
                     })
@@ -147,15 +134,6 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
         }
         if (showProfile) ProfileSheet(state.settings, onDismiss = { showProfile = false }, onSave = { vm.saveSettings(it); showProfile = false; scope.launch { snackbar.showSnackbar("Targets saved") } })
     }
-}
-
-private suspend fun syncSteps(client: HealthConnectClient?, vm: DashboardViewModel, snackbar: SnackbarHostState) {
-    if (client == null) return
-    runCatching {
-        val zone = ZoneId.systemDefault(); val start = LocalDate.now(zone).atStartOfDay(zone).toInstant()
-        val result = client.aggregate(AggregateRequest(setOf(StepsRecord.COUNT_TOTAL), TimeRangeFilter.between(start, Instant.now())))
-        vm.updateSteps((result[StepsRecord.COUNT_TOTAL] ?: 0L).toInt()); vm.setHealthStatus("Synced from Health Connect")
-    }.onFailure { vm.setHealthStatus("Health Connect sync failed · manual entry available") }
 }
 
 private class StepCounterTracker(context: android.content.Context, private val vm: DashboardViewModel) : SensorEventListener {

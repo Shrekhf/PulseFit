@@ -145,7 +145,7 @@ abstract class PulseFitDatabase : RoomDatabase() {
     }
 }
 
-data class Settings(val calorieTarget: Int = 2150, val proteinTarget: Int = 185, val carbTarget: Int = 200, val fatTarget: Int = 65, val stepGoal: Int = 15000, val calibrationMode: String = "personal_500", val geminiKey: String = "")
+data class Settings(val calorieTarget: Int = 2150, val proteinTarget: Int = 185, val carbTarget: Int = 200, val fatTarget: Int = 65, val stepGoal: Int = 15000, val calibrationMode: String = "personal_500", val geminiKey: String = "", val wearableActiveCalories: Int? = null)
 
 data class PulseFitUiState(
     val date: String = LocalDate.now().toString(), val steps: Int = 12450, val settings: Settings = Settings(), val meals: List<MealEntity> = emptyList(),
@@ -156,7 +156,7 @@ data class PulseFitUiState(
     val protein get() = meals.sumOf { it.protein }
     val carbs get() = meals.sumOf { it.carbs }
     val fat get() = meals.sumOf { it.fat }
-    val stepBurn get() = steps * when (settings.calibrationMode) { "tracker_high" -> 700; "conservative" -> 420; else -> 500 } / 15000
+    val stepBurn get() = StepBurnCalculator.calibrated(steps, settings.calibrationMode, settings.wearableActiveCalories)
     val workoutBurn get() = sets.filter { it.legacyCompleted }.sumOf { it.burnCalories }
     val remaining get() = settings.calorieTarget - intake + stepBurn + workoutBurn
 }
@@ -175,7 +175,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         fatTarget = p[intPreferencesKey("fat")] ?: 65,
         stepGoal = p[intPreferencesKey("step_goal")] ?: 15000,
         calibrationMode = p[stringPreferencesKey("calibration")] ?: "personal_500",
-        geminiKey = p[stringPreferencesKey("gemini_key")] ?: ""
+        geminiKey = p[stringPreferencesKey("gemini_key")] ?: "",
+        wearableActiveCalories = p[intPreferencesKey("wearable_active_calories")]
     ) }
     val state: StateFlow<PulseFitUiState> = combine(
         dao.dailyLog(date), dao.meals(date), dao.exerciseSets(date), dao.splits(), settingsFlow, splitId, selectedDay, healthStatus

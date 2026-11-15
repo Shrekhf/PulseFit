@@ -77,6 +77,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = PulseFitDatabase.get(app).dao()
     private val prefs = app.pulseFitPrefs
     private val healthSyncBridge = HealthSyncBridge(app)
+    private val samsungHealthRepository = SamsungHealthRepository(app)
     private val today = LocalDate.now().toString()
     private val splitId = prefs.data.map { it[stringPreferencesKey("active_split")] ?: "bro_split" }.stateIn(viewModelScope, SharingStarted.Eagerly, "bro_split")
     private val selectedDay = MutableStateFlow(LocalDate.now().dayOfWeek.value - 1)
@@ -88,7 +89,9 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private var activeWorkoutStartMs: Long? = null
     private var lastAutoSyncKey: String? = null
     private val _healthSyncStatus = MutableStateFlow<String?>(null)
-    val recoverySnapshot: StateFlow<RecoverySnapshot?> = MutableStateFlow(null)
+    private val _recoverySnapshot = MutableStateFlow<RecoverySnapshot?>(null)
+    val recoverySnapshot: StateFlow<RecoverySnapshot?> = _recoverySnapshot
+    fun refreshRecovery() = viewModelScope.launch { _recoverySnapshot.value = samsungHealthRepository.readRecovery() }
 
     private val workoutContent: Flow<WorkoutUiState> = combine(splitId, selectedDay, dao.splits(), dao.exerciseSets(today)) { id, dayIndex, splits, sets -> WorkoutInputs(id, dayIndex, splits, sets) }
         .flatMapLatest { input ->
@@ -108,6 +111,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WorkoutUiState())
 
     init {
+        refreshRecovery()
         viewModelScope.launch { seed(); val p = prefs.data.first(); timerTarget.value = p[longPreferencesKey("workout_timer_target")] ?: 0L }
         viewModelScope.launch {
             while (true) {
