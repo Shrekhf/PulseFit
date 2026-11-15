@@ -53,11 +53,21 @@ class GeminiApiClient(context: Context) {
         require(key.isNotEmpty()) { "Enter an API key first." }
         val models = listModels(key)
         val selected = normalizeModelId(preferredModel)
-        val active = models.firstOrNull { it.equals(selected, ignoreCase = true) }
-            ?: models.firstOrNull()
-            ?: error("This API key has no models supporting generateContent.")
-        cacheModel(active)
-        active
+        val candidates = (listOf(selected) + FALLBACK_MODELS + models).map(::normalizeModelId).distinct()
+        var lastModelError: GeminiRestException? = null
+        for (model in candidates) {
+            if (models.none { it.equals(model, ignoreCase = true) }) continue
+            val (status, body) = postGenerate(key, model, "Return this JSON exactly: {\"ok\":true}", bitmap = null, imageUri = null)
+            if (status == 404) {
+                lastModelError = apiException(status, body)
+                continue
+            }
+            if (status !in 200..299) throw apiException(status, body)
+            parseGeneratedText(body)
+            cacheModel(model)
+            return@withContext model
+        }
+        throw lastModelError ?: IllegalStateException("This API key has no models supporting generateContent.")
     }
 
     private suspend fun listModels(key: String): List<String> = withContext(Dispatchers.IO) {

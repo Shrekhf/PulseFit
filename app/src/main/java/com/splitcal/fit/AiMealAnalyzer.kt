@@ -43,11 +43,20 @@ class AiMealAnalyzer {
     private fun fallback(prompt: String, reason: String) = MealAnalysis("Offline meal estimate", 45, parseMealOffline(prompt), fallbackReason = reason)
 
     private fun describeFailure(failure: Exception): String {
+        if (failure is GeminiRestException) {
+            val detail = failure.message.orEmpty().substringAfter(": ", failure.message.orEmpty()).take(220)
+            return when (failure.statusCode) {
+                400, 401, 403 -> "Gemini rejected the generation request (HTTP ${failure.statusCode}): $detail"
+                404 -> "Gemini could not find a model that can analyze this request (HTTP 404). Test & Auto-Detect Model checks generation access now."
+                429 -> "Gemini quota or rate limit reached (HTTP 429): $detail"
+                in 500..599 -> "Gemini is temporarily unavailable (HTTP ${failure.statusCode}): $detail"
+                else -> "Gemini request failed (HTTP ${failure.statusCode}): $detail"
+            }
+        }
         val message = generateSequence(failure as Throwable?) { it.cause }
             .flatMap { sequenceOf(it.javaClass.simpleName, it.message.orEmpty()) }
             .joinToString(" ").lowercase()
         return when {
-            failure is GeminiRestException && failure.statusCode == 404 -> "No available model answered. Model discovery also returned 404; check API access for this key."
             "unknownhost" in message || "unable to resolve" in message || "network" in message || "timeout" in message -> "No connection to Gemini. Check internet access and try again."
             "api_key_invalid" in message || "api key not valid" in message || "invalid api key" in message || "unauthenticated" in message || "http 400" in message || "http 401" in message || "http 403" in message -> "Gemini rejected this API key or request. Check the key and Gemini API access in Google AI Studio."
             "resource_exhausted" in message || "quota" in message || "429" in message -> "Gemini quota or rate limit is unavailable right now. Check quota and try later."
