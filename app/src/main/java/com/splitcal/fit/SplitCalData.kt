@@ -38,8 +38,8 @@ class UserPreferencesRepository(private val context: Context) {
 @Entity(tableName = "daily_logs")
 data class DailyLogEntity(@PrimaryKey val date: String, val steps: Int = 0)
 
-@Entity(tableName = "meals")
-data class MealEntity(@PrimaryKey val id: String = UUID.randomUUID().toString(), val date: String, val slot: String, val name: String, val kcal: Int, val protein: Int, val carbs: Int, val fat: Int)
+@Entity(tableName = "meals", indices = [Index(value = ["externalRecordId"], unique = true)])
+data class MealEntity(@PrimaryKey val id: String = UUID.randomUUID().toString(), val date: String, val slot: String, val name: String, val kcal: Int, val protein: Int, val carbs: Int, val fat: Int, val externalRecordId: String? = null, val healthConnectRecordId: String? = null, val externalDataOrigin: String? = null)
 
 @Entity(tableName = "ingredients", foreignKeys = [ForeignKey(entity = MealEntity::class, parentColumns = ["id"], childColumns = ["mealId"], onDelete = ForeignKey.CASCADE)], indices = [Index("mealId")])
 data class IngredientItem(@PrimaryKey val id: String = UUID.randomUUID().toString(), val mealId: String, val name: String, val baseKcal: Int, val baseProtein: Int, val baseCarbs: Int, val baseFat: Int, val multiplier: Float = 1f, val included: Boolean = true)
@@ -117,6 +117,7 @@ data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val
     @Query("SELECT * FROM meals WHERE date = :date ORDER BY rowid DESC") fun meals(date: String): Flow<List<MealEntity>>
     @Insert suspend fun insertMeal(meal: MealEntity)
     @Query("SELECT * FROM meals WHERE id = :id LIMIT 1") suspend fun mealOnce(id: String): MealEntity?
+    @Query("SELECT * FROM meals WHERE externalRecordId = :recordId LIMIT 1") suspend fun mealByExternalRecordId(recordId: String): MealEntity?
     @Update suspend fun updateMeal(meal: MealEntity)
     @Query("DELETE FROM meals WHERE id = :id") suspend fun deleteMeal(id: String)
     @Query("DELETE FROM ingredients WHERE mealId = :mealId") suspend fun deleteIngredientsForMeal(mealId: String)
@@ -143,14 +144,14 @@ data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val
     @Query("SELECT * FROM exercise_sets WHERE date = :date AND isCompleted = 1") fun completedWorkoutSets(date: String): Flow<List<ExerciseSetEntity>>
 }
 
-@Database(entities = [DailyLogEntity::class, MealEntity::class, IngredientItem::class, WorkoutSplitEntity::class, PlannedExerciseEntity::class, WorkoutDayEntity::class, ExerciseEntity::class, ExerciseSetEntity::class], version = 3, exportSchema = false)
+@Database(entities = [DailyLogEntity::class, MealEntity::class, IngredientItem::class, WorkoutSplitEntity::class, PlannedExerciseEntity::class, WorkoutDayEntity::class, ExerciseEntity::class, ExerciseSetEntity::class], version = 4, exportSchema = false)
 @TypeConverters(SplitCalConverters::class)
 abstract class SplitCalDatabase : RoomDatabase() {
     abstract fun dao(): SplitCalDao
     companion object {
         @Volatile private var instance: SplitCalDatabase? = null
         fun get(app: Application): SplitCalDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(app, SplitCalDatabase::class.java, "splitcal_db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+            instance ?: Room.databaseBuilder(app, SplitCalDatabase::class.java, "splitcal_db").addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
         }
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -171,6 +172,14 @@ abstract class SplitCalDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE exercise_sets ADD COLUMN exerciseId TEXT NOT NULL DEFAULT ''")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_exercise_sets_exerciseId ON exercise_sets(exerciseId)")
+            }
+        }
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE meals ADD COLUMN externalRecordId TEXT")
+                db.execSQL("ALTER TABLE meals ADD COLUMN healthConnectRecordId TEXT")
+                db.execSQL("ALTER TABLE meals ADD COLUMN externalDataOrigin TEXT")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_meals_externalRecordId ON meals(externalRecordId)")
             }
         }
     }

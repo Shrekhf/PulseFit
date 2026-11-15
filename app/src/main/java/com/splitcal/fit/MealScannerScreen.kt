@@ -2,6 +2,8 @@ package com.splitcal.fit
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -37,6 +39,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 
 private val MealBg = Color(0xFF0B1120)
@@ -50,6 +55,12 @@ private val MealWhite = Color(0xFFF8FAFC)
 @Composable fun MealScannerScreen(dashboard: SplitCalUiState, vm: MealViewModel, onToast: (String) -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, vm) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) vm.syncMealsFromSamsungHealth() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val scope = rememberCoroutineScope()
     var prompt by remember { mutableStateOf("Grilled chicken bowl with greens, rice, beans and sauce") }
     var title by remember(state.title) { mutableStateOf(state.title) }
@@ -66,9 +77,20 @@ private val MealWhite = Color(0xFFF8FAFC)
         Text("AI MEAL SCANNER", color = MealGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
         Text("Scan, customize, and log", color = MealWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.PhotoLibrary, null); Text("Photo") }
-            OutlinedButton(onClick = { camera.launch(null) }) { Icon(Icons.Default.CameraAlt, null); Text("Camera") }
+            OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.PhotoLibrary, null); Text("Photo", maxLines = 1) }
+            OutlinedButton(onClick = { camera.launch(null) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.CameraAlt, null); Text("Camera", maxLines = 1) }
+            Button(onClick = {
+                vm.markSamsungHealthLaunch()
+                val launch = context.packageManager.getLaunchIntentForPackage("com.sec.android.app.shealth")
+                if (launch == null) Toast.makeText(context, "Samsung Health is not installed", Toast.LENGTH_LONG).show()
+                else {
+                    Toast.makeText(context, "Scan your meal or barcode in Samsung Health, then return to SplitCal to auto-import", Toast.LENGTH_LONG).show()
+                    runCatching { context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        .onFailure { Toast.makeText(context, "Could not open Samsung Health", Toast.LENGTH_SHORT).show() }
+                }
+            }, modifier = Modifier.weight(1.45f), colors = ButtonDefaults.buttonColors(containerColor = MealCyan, contentColor = MealBg)) { Text("Scan in Samsung Health", fontSize = 9.sp, maxLines = 2) }
         }
+        state.syncStatus?.let { Text(it, color = if (it.startsWith("Imported") || it.startsWith("Samsung Health sync complete")) MealCyan else MealMuted, fontSize = 10.sp) }
         if (bitmap != null) {
             Card(colors = CardDefaults.cardColors(containerColor = MealCard), shape = RoundedCornerShape(20.dp)) {
                 Box(Modifier.fillMaxWidth().height(220.dp)) {
@@ -131,7 +153,7 @@ private val MealWhite = Color(0xFFF8FAFC)
             }
         }
         Text("MEALS · ${dashboard.date}", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        dashboard.meals.forEach { meal -> Card(colors = CardDefaults.cardColors(containerColor = MealCard)) { Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("${meal.slot} · ${meal.name}", color = MealWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp); Text("${meal.protein}P · ${meal.carbs}C · ${meal.fat}F", color = MealMuted, fontSize = 10.sp) }; Text("${meal.kcal} kcal", color = MealGreen, fontSize = 10.sp); IconButton(onClick = { vm.loadMealForEdit(meal.id); onToast("Loaded meal for editing") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Edit, "Edit meal", tint = MealCyan, modifier = Modifier.size(17.dp)) }; IconButton(onClick = { vm.deleteMeal(meal.id); onToast("Meal deleted") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete meal", tint = MealMuted, modifier = Modifier.size(17.dp)) } } } }
+        dashboard.meals.forEach { meal -> Card(colors = CardDefaults.cardColors(containerColor = MealCard)) { Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("${meal.slot} · ${meal.name}", color = MealWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp); Text("${meal.protein}P · ${meal.carbs}C · ${meal.fat}F", color = MealMuted, fontSize = 10.sp) }; Text("${meal.kcal} kcal", color = MealGreen, fontSize = 10.sp) }; Row(verticalAlignment = Alignment.CenterVertically) { if (meal.externalRecordId != null) Text(if (meal.externalDataOrigin == "com.sec.android.app.shealth") "Imported from Samsung Health" else "Imported from Health Connect", color = MealCyan, fontSize = 9.sp, modifier = Modifier.weight(1f)) else Spacer(Modifier.weight(1f)); IconButton(onClick = { vm.loadMealForEdit(meal.id); onToast(if (meal.externalRecordId != null) "Loaded imported meal · ingredient breakdown is estimated" else "Loaded meal for editing") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Edit, "Edit meal", tint = MealCyan, modifier = Modifier.size(17.dp)) }; if (meal.externalRecordId != null) TextButton(onClick = { vm.loadMealForEdit(meal.id); onToast("Apply modifiers, then save to update SplitCal and sync an edited copy") }) { Text("Edit / Apply Modifiers", fontSize = 9.sp) }; IconButton(onClick = { vm.deleteMeal(meal.id); onToast("Meal deleted") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete meal", tint = MealMuted, modifier = Modifier.size(17.dp)) } } } } }
     }
 }
 

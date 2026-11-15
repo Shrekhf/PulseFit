@@ -136,7 +136,7 @@ private fun SplitCalApp(vm: DashboardViewModel = viewModel()) {
             Column(Modifier.fillMaxSize().padding(pad)) {
                 TopBar(state.date, vm::selectDate, workoutState.remainingSeconds, workoutState.timerTargetElapsedMs > 0L, workoutState.timerMuted, workoutVm::toggleTimer, workoutVm::resetTimer, workoutVm::toggleMute, { showProfile = true })
                 when (tab) {
-                    0 -> Dashboard(state, onWorkout = { tab = 1 }, onMeals = { tab = 2 }, onSteps = { tab = 3 }, onProfile = { showProfile = true })
+                    0 -> Dashboard(state, mealVm, onWorkout = { tab = 1 }, onMeals = { tab = 2 }, onSteps = { tab = 3 }, onProfile = { showProfile = true })
                     1 -> WorkoutScreen(workoutVm, onFeedback = { scope.launch { snackbar.showSnackbar(it) } })
                     2 -> MealScannerScreen(state, mealVm, onToast = { scope.launch { snackbar.showSnackbar(it) } })
                     else -> StepsScreen(state, stepsVm, onConnectHealthConnect = {
@@ -214,7 +214,13 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { item { Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = content) } }
 }
 
-@Composable private fun Dashboard(s: SplitCalUiState, onWorkout: () -> Unit, onMeals: () -> Unit, onSteps: () -> Unit, onProfile: () -> Unit) {
+@Composable private fun Dashboard(s: SplitCalUiState, mealVm: MealViewModel, onWorkout: () -> Unit, onMeals: () -> Unit, onSteps: () -> Unit, onProfile: () -> Unit) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, mealVm) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) mealVm.syncMealsFromSamsungHealth() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     ScrollPage {
         Text(LocalDate.parse(s.date).let { "${it.dayOfWeek.name.lowercase().replaceFirstChar(Char::uppercase)}, ${it.month.name.lowercase().replaceFirstChar(Char::uppercase)} ${it.dayOfMonth}" }, color = White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

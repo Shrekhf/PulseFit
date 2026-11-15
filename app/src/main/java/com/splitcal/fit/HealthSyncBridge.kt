@@ -40,6 +40,26 @@ class HealthSyncBridge(private val context: Context) {
         true
     }.getOrDefault(false)
 
+    /** Replace SplitCal's previously written edited copy; the original Samsung-owned record is left intact. */
+    suspend fun writeEditedImportedMeal(mealTitle: String, slot: String, totalCalories: Int, proteinGrams: Int, carbsGrams: Int, fatGrams: Int, previousSplitCalRecordId: String?): String? = runCatching {
+        val permission = HealthPermission.getWritePermission(NutritionRecord::class)
+        val client = clientIfPermitted(permission) ?: return null
+        val now = Instant.now()
+        val zone = ZoneOffset.systemDefault().rules.getOffset(now)
+        val response = client.insertRecords(listOf(NutritionRecord(
+            startTime = now, startZoneOffset = zone, endTime = now, endZoneOffset = zone,
+            metadata = Metadata.manualEntry(), name = "SplitCal edited: $mealTitle",
+            energy = Energy.kilocalories(totalCalories.toDouble()), protein = Mass.grams(proteinGrams.toDouble()),
+            totalCarbohydrate = Mass.grams(carbsGrams.toDouble()), totalFat = Mass.grams(fatGrams.toDouble()),
+            mealType = when (slot.lowercase()) { "breakfast" -> 1; "lunch" -> 2; "dinner" -> 3; else -> 4 }
+        )))
+        response.recordIdsList.firstOrNull()?.also { newId ->
+            if (!previousSplitCalRecordId.isNullOrBlank() && previousSplitCalRecordId != newId) {
+                runCatching { client.deleteRecords(NutritionRecord::class, listOf(previousSplitCalRecordId), emptyList()) }
+            }
+        }
+    }.getOrNull()
+
     suspend fun writeWorkoutToSamsungHealth(title: String, durationMinutes: Int, activeCaloriesBurned: Int): Boolean = runCatching {
         val exercisePermission = HealthPermission.getWritePermission(ExerciseSessionRecord::class)
         val client = clientIfPermitted(exercisePermission) ?: return false

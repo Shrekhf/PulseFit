@@ -10,19 +10,23 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import kotlin.math.roundToInt
 
 data class IngredientDraft(
     val name: String, val kcal: Int, val p: Int, val c: Int, val f: Int,
     val included: Boolean = true, val multiplier: Float = 1f, val portion: String = "1 serving"
 )
 data class MealAnalysis(val mealTitle: String, val confidence: Int, val ingredients: List<IngredientDraft>, val usedGemini: Boolean = false, val fallbackReason: String? = null, val activeModel: String? = null)
-data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null, val editingMealId: String? = null, val editingSlot: String? = null, val analysisStatus: String? = null)
+data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null, val editingMealId: String? = null, val editingSlot: String? = null, val analysisStatus: String? = null, val editingExternalRecordId: String? = null, val editingHealthConnectRecordId: String? = null)
 
 class MealViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = SplitCalDatabase.get(application).dao()
     private val healthSyncBridge = HealthSyncBridge(application)
+    private val healthConnect = HealthConnectManager(application)
     private val preferences = application.splitCalPrefs
     private var selectedDate: String = LocalDate.now().toString()
+    private var lastLaunchTimestamp: java.time.Instant? = null
+    private var syncingNutrition = false
     private val _state = MutableStateFlow(MealScannerState(ingredients = parseMealOffline("chicken bowl with greens, rice, beans and sauce")))
     val state: StateFlow<MealScannerState> = _state.asStateFlow()
     fun setDate(date: String) { if (runCatching { LocalDate.parse(date) }.isSuccess) selectedDate = date }
@@ -34,7 +38,45 @@ class MealViewModel(application: Application) : AndroidViewModel(application) {
         val meal = dao.mealOnce(id) ?: return@launch
         val rows = dao.ingredientsOnce(id).map { IngredientDraft(it.name, it.baseKcal, it.baseProtein, it.baseCarbs, it.baseFat, it.included, it.multiplier) }
         selectedDate = meal.date
-        _state.value = MealScannerState(meal.name, 100, rows, editingMealId = meal.id, editingSlot = meal.slot)
+        _state.value = MealScannerState(meal.name, 100, rows.ifEmpty { estimateImportedIngredients(meal) }, editingMealId = meal.id, editingSlot = meal.slot, editingExternalRecordId = meal.externalRecordId, editingHealthConnectRecordId = meal.healthConnectRecordId)
+    }
+    fun markSamsungHealthLaunch() { lastLaunchTimestamp = java.time.Instant.now() }
+    fun syncMealsFromSamsungHealth() = viewModelScope.launch {
+        if (syncingNutrition || selectedDate != LocalDate.now().toString()) return@launch
+        syncingNutrition = true
+        try {
+            val readPermission = androidx.health.connect.client.permission.HealthPermission.getReadPermission(androidx.health.connect.client.records.NutritionRecord::class)
+            if (readPermission !in healthConnect.grantedPermissions()) {
+                _state.value = _state.value.copy(syncStatus = "Allow Health Connect nutrition access to import Samsung Health meals")
+                return@launch
+            }
+            val preferSamsung = preferences.data.first()[PREFER_SAMSUNG_HEALTH_ORIGIN] ?: true
+            val records = healthConnect.readSamsungHealthNutritionForToday(preferSamsung)
+            val launchedAt = lastLaunchTimestamp
+            val candidates = records.filter { record ->
+                record.metadata.dataOrigin.packageName != "com.splitcal.fit" &&
+                    (launchedAt == null || !record.startTime.isBefore(launchedAt))
+            }
+            var imported = 0
+            candidates.forEach { record ->
+                val externalId = record.metadata.id
+                if (dao.mealByExternalRecordId(externalId) == null) {
+                    val name = record.name?.takeIf { it.isNotBlank() } ?: "Samsung Health Scanned Meal"
+                    val meal = MealEntity(date = LocalDate.now().toString(), slot = mealSlot(record.mealType), name = name,
+                        kcal = record.energy?.inKilocalories?.roundToInt() ?: 0,
+                        protein = record.protein?.inGrams?.roundToInt() ?: 0,
+                        carbs = record.totalCarbohydrate?.inGrams?.roundToInt() ?: 0,
+                        fat = record.totalFat?.inGrams?.roundToInt() ?: 0, externalRecordId = externalId, externalDataOrigin = record.metadata.dataOrigin.packageName)
+                    dao.insertMeal(meal)
+                    dao.insertIngredients(estimateImportedIngredients(meal).map { IngredientItem(mealId = meal.id, name = it.name, baseKcal = it.kcal, baseProtein = it.p, baseCarbs = it.c, baseFat = it.f) })
+                    imported++
+                }
+            }
+            lastLaunchTimestamp = null
+            _state.value = _state.value.copy(syncStatus = if (imported > 0) "Imported $imported meal${if (imported == 1) "" else "s"} from Samsung Health · ingredient rows are estimates" else "Samsung Health sync complete · no new meals found")
+        } catch (error: Exception) {
+            _state.value = _state.value.copy(syncStatus = "Samsung Health meal sync unavailable · ${error.message ?: "check Health Connect access"}")
+        } finally { syncingNutrition = false }
     }
     fun deleteMeal(id: String) = viewModelScope.launch { dao.deleteMeal(id) }
     fun setAnalyzing(value: Boolean) = mutate { copy(analyzing = value, error = null) }
@@ -63,13 +105,41 @@ class MealViewModel(application: Application) : AndroidViewModel(application) {
         val s = _state.value
         val rows = s.ingredients.filter { it.included }
         val total = IngredientTotals(rows.sumOf { (it.kcal * it.multiplier).toInt() }, rows.sumOf { (it.p * it.multiplier).toInt() }, rows.sumOf { (it.c * it.multiplier).toInt() }, rows.sumOf { (it.f * it.multiplier).toInt() })
-        val meal = MealEntity(id = s.editingMealId ?: java.util.UUID.randomUUID().toString(), date = selectedDate, slot = slot, name = s.title, kcal = total.kcal, protein = total.protein, carbs = total.carbs, fat = total.fat)
+        var meal = MealEntity(id = s.editingMealId ?: java.util.UUID.randomUUID().toString(), date = selectedDate, slot = slot, name = s.title, kcal = total.kcal, protein = total.protein, carbs = total.carbs, fat = total.fat, externalRecordId = s.editingExternalRecordId, healthConnectRecordId = s.editingHealthConnectRecordId)
         if (s.editingMealId != null) { dao.updateMeal(meal); dao.deleteIngredientsForMeal(meal.id) } else dao.insertMeal(meal)
         dao.insertIngredients(s.ingredients.map { IngredientItem(mealId = meal.id, name = it.name, baseKcal = it.kcal, baseProtein = it.p, baseCarbs = it.c, baseFat = it.f, multiplier = it.multiplier, included = it.included) })
-        val synced = s.editingMealId == null && selectedDate == LocalDate.now().toString() && runCatching { healthSyncBridge.writeMealToSamsungHealth(s.title, slot, total.kcal, total.protein, total.carbs, total.fat) }.getOrDefault(false)
-        val status = if (synced) "Synced to Room + Samsung Health" else "Saved to Room · Health Connect sync unavailable or not permitted"
-        _state.value = _state.value.copy(syncStatus = status, editingMealId = null)
+        var synced = false
+        var status: String
+        if (s.editingExternalRecordId != null) {
+            val writtenId = healthSyncBridge.writeEditedImportedMeal(s.title, slot, total.kcal, total.protein, total.carbs, total.fat, s.editingHealthConnectRecordId)
+            if (writtenId != null) { meal = meal.copy(healthConnectRecordId = writtenId); dao.updateMeal(meal); synced = true }
+            status = if (synced) "SplitCal update synced · original Samsung Health record remains unchanged" else "Updated in SplitCal · Health Connect write unavailable"
+        } else {
+            synced = s.editingMealId == null && selectedDate == LocalDate.now().toString() && runCatching { healthSyncBridge.writeMealToSamsungHealth(s.title, slot, total.kcal, total.protein, total.carbs, total.fat) }.getOrDefault(false)
+            status = if (synced) "Synced to Room + Samsung Health" else "Saved to Room · Health Connect sync unavailable or not permitted"
+        }
+        _state.value = _state.value.copy(syncStatus = status, editingMealId = null, editingExternalRecordId = null, editingHealthConnectRecordId = null)
         onDone(status)
+    }
+    private fun mealSlot(type: Int): String = when (type) { 1 -> "Breakfast"; 2 -> "Lunch"; 3 -> "Dinner"; else -> "Snack" }
+    private fun estimateImportedIngredients(meal: MealEntity): List<IngredientDraft> {
+        val guess = parseMealOffline(meal.name)
+        fun scaled(selector: (IngredientDraft) -> Int, total: Int): List<Int> {
+            val sum = guess.sumOf(selector)
+            if (sum <= 0) return guess.mapIndexed { i, _ -> if (i == 0) total else 0 }
+            val scaled = guess.map { (selector(it).toFloat() * total / sum).roundToInt() }.toMutableList()
+            scaled[scaled.lastIndex] += total - scaled.sum()
+            return scaled
+        }
+        val kcal = scaled({ it.kcal }, meal.kcal); val protein = scaled({ it.p }, meal.protein); val carbs = scaled({ it.c }, meal.carbs); val fat = scaled({ it.f }, meal.fat)
+        return guess.mapIndexed { i, item ->
+            val adjustedName = when {
+                item.name == "Rice / grain / bread" && "pita" in meal.name.lowercase() -> "Pita / wrap"
+                item.name == "Rice / grain / bread" && ("rice" in meal.name.lowercase() || "greens" in meal.name.lowercase()) -> "Rice and grains"
+                else -> item.name
+            }
+            item.copy(name = adjustedName, kcal = kcal[i], p = protein[i], c = carbs[i], f = fat[i])
+        }
     }
     private inline fun mutate(block: MealScannerState.() -> MealScannerState) { _state.value = _state.value.block() }
 }
