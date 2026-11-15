@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -14,12 +15,13 @@ data class IngredientDraft(
     val name: String, val kcal: Int, val p: Int, val c: Int, val f: Int,
     val included: Boolean = true, val multiplier: Float = 1f, val portion: String = "1 serving"
 )
-data class MealAnalysis(val mealTitle: String, val confidence: Int, val ingredients: List<IngredientDraft>)
-data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null, val editingMealId: String? = null, val editingSlot: String? = null)
+data class MealAnalysis(val mealTitle: String, val confidence: Int, val ingredients: List<IngredientDraft>, val usedGemini: Boolean = false, val fallbackReason: String? = null)
+data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null, val editingMealId: String? = null, val editingSlot: String? = null, val analysisStatus: String? = null)
 
 class MealViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = SplitCalDatabase.get(application).dao()
     private val healthSyncBridge = HealthSyncBridge(application)
+    private val preferences = application.splitCalPrefs
     private var selectedDate: String = LocalDate.now().toString()
     private val _state = MutableStateFlow(MealScannerState(ingredients = parseMealOffline("chicken bowl with greens, rice, beans and sauce")))
     val state: StateFlow<MealScannerState> = _state.asStateFlow()
@@ -36,7 +38,13 @@ class MealViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun deleteMeal(id: String) = viewModelScope.launch { dao.deleteMeal(id) }
     fun setAnalyzing(value: Boolean) = mutate { copy(analyzing = value, error = null) }
-    fun setAnalysis(analysis: MealAnalysis) { _state.value = MealScannerState(analysis.mealTitle, analysis.confidence, analysis.ingredients) }
+    fun setAnalysis(analysis: MealAnalysis) { _state.value = MealScannerState(analysis.mealTitle, analysis.confidence, analysis.ingredients, analysisStatus = if (analysis.usedGemini) "Analyzed with Gemini 2.5 Flash" else "Offline estimate · ${analysis.fallbackReason ?: "Gemini unavailable"}") }
+    suspend fun analyzeMeal(context: android.content.Context, prompt: String, bitmap: android.graphics.Bitmap?): MealAnalysis {
+        val apiKey = preferences.data.first()[androidx.datastore.preferences.core.stringPreferencesKey("gemini_key")].orEmpty().trim()
+        val analysis = AiMealAnalyzer().analyze(context, apiKey, prompt, bitmap)
+        setAnalysis(analysis)
+        return analysis
+    }
     fun fail(message: String) = mutate { copy(analyzing = false, error = message) }
     fun applyModification(label: String) = mutate {
         val list = ingredients.toMutableList()

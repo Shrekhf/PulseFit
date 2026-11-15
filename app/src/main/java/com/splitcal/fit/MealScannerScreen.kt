@@ -51,7 +51,6 @@ private val MealWhite = Color(0xFFF8FAFC)
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val analyzer = remember { AiMealAnalyzer() }
     var prompt by remember { mutableStateOf("Grilled chicken bowl with greens, rice, beans and sauce") }
     var title by remember(state.title) { mutableStateOf(state.title) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -84,13 +83,17 @@ private val MealWhite = Color(0xFFF8FAFC)
                 OutlinedTextField(title, { title = it; vm.updateTitle(it) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Meal title") })
                 Button(enabled = !state.analyzing, onClick = { scope.launch {
                     vm.setAnalyzing(true)
-                    val result = analyzer.analyze(context, dashboard.settings.geminiKey, prompt, bitmap)
-                    vm.setAnalysis(result); title = result.mealTitle
-                    if (dashboard.settings.geminiKey.isBlank()) onToast("Offline nutrition estimate ready") else onToast("Meal analysis ready")
+                    runCatching { vm.analyzeMeal(context, prompt, bitmap) }
+                        .onSuccess { result ->
+                            title = result.mealTitle
+                            onToast(if (result.usedGemini) "Gemini 2.5 Flash analysis complete" else result.fallbackReason ?: "Offline estimate ready")
+                        }
+                        .onFailure { error -> vm.fail(error.message ?: "Meal analysis failed"); onToast("Meal analysis failed: ${error.message ?: "unknown error"}") }
                 } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) {
                     Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text(if (state.analyzing) "Analyzing…" else "Analyze meal")
                 }
-                Text("Gemini requires the optional API key in Profile; without it, the built-in offline parser works immediately.", color = MealMuted, fontSize = 10.sp)
+                state.analysisStatus?.let { Text(it, color = if (it.startsWith("Analyzed with Gemini")) MealGreen else MealCyan, fontSize = 10.sp) }
+                Text("Gemini uses the saved key for online analysis. If the request fails, SplitCal shows the reason and uses the offline estimate.", color = MealMuted, fontSize = 10.sp)
             }
         }
         Text("RESTAURANT & TAKEOUT PRESETS", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
