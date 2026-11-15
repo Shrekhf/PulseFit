@@ -1,8 +1,9 @@
 package com.splitcal.fit
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -18,9 +19,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
@@ -35,15 +35,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.testTag
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import kotlin.math.ceil
 
 private val MealBg = Color(0xFF0B1120)
 private val MealCard = Color(0xFF151E2E)
@@ -53,112 +56,239 @@ private val MealMuted = Color(0xFF94A3B8)
 private val MealWhite = Color(0xFFF8FAFC)
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun MealScannerScreen(dashboard: SplitCalUiState, vm: MealViewModel, onToast: (String) -> Unit) {
+@Composable
+fun MealScannerScreen(dashboard: SplitCalUiState, vm: MealViewModel, onToast: (String) -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var customName by remember { mutableStateOf("") }
+    var customPortion by remember { mutableStateOf("1 serving") }
+    var customKcal by remember { mutableStateOf("") }
+    var customProtein by remember { mutableStateOf("") }
+    var customCarbs by remember { mutableStateOf("") }
+    var customFat by remember { mutableStateOf("") }
+
     DisposableEffect(lifecycleOwner, vm) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) vm.syncMealsFromSamsungHealth() }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val scope = rememberCoroutineScope()
-    var prompt by remember { mutableStateOf("Grilled chicken bowl with greens, rice, beans and sauce") }
-    var title by remember(state.title) { mutableStateOf(state.title) }
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var slot by remember { mutableStateOf("Dinner") }
-    LaunchedEffect(state.editingMealId, state.editingSlot) { if (state.editingMealId != null) slot = state.editingSlot ?: slot }
+
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) runCatching { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } }.onSuccess { bitmap = it }.onFailure { onToast("Could not open that photo") }
+        if (uri != null) runCatching { decodeMealPhoto(context, uri) }
+            .onSuccess { bitmap = it }
+            .onFailure { onToast("Could not open that photo") }
     }
-    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap = it; if (it == null) onToast("No photo captured") }
-    val totalRows = state.ingredients.filter { it.included }
-    val total = IngredientTotals(totalRows.sumOf { (it.kcal * it.multiplier).toInt() }, totalRows.sumOf { (it.p * it.multiplier).toInt() }, totalRows.sumOf { (it.c * it.multiplier).toInt() }, totalRows.sumOf { (it.f * it.multiplier).toInt() })
-    Column(Modifier.testTag("meal_scanner").fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { captured ->
+        bitmap = captured
+        if (captured == null) onToast("No photo captured")
+    }
+
+    Column(
+        Modifier.testTag("meal_scanner").fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         Text("AI MEAL SCANNER", color = MealGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
         Text("Scan, customize, and log", color = MealWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.PhotoLibrary, null); Text("Photo", maxLines = 1) }
-            OutlinedButton(onClick = { camera.launch(null) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.CameraAlt, null); Text("Camera", maxLines = 1) }
-            Button(onClick = {
-                vm.markSamsungHealthLaunch()
-                val launch = context.packageManager.getLaunchIntentForPackage("com.sec.android.app.shealth")
-                if (launch == null) { Toast.makeText(context, "Samsung Health is not installed", Toast.LENGTH_LONG).show(); onToast("Samsung Health isn't installed · meal scanning remains available in SplitCal") }
-                else {
-                    Toast.makeText(context, "Scan your meal or barcode in Samsung Health, then return to SplitCal to auto-import", Toast.LENGTH_LONG).show()
-                    runCatching { context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                        .onFailure { Toast.makeText(context, "Could not open Samsung Health", Toast.LENGTH_SHORT).show(); onToast("Could not open Samsung Health · meal scanning remains available in SplitCal") }
-                }
-            }, modifier = Modifier.weight(1.45f).testTag("scan_samsung_health"), colors = ButtonDefaults.buttonColors(containerColor = MealCyan, contentColor = MealBg)) { Text("Scan in Samsung Health", fontSize = 9.sp, maxLines = 2) }
+        Text(state.confidenceBadge, color = MealCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.PhotoLibrary, null); Text("Photo", maxLines = 1)
+            }
+            OutlinedButton(onClick = { camera.launch(null) }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.CameraAlt, null); Text("Camera", maxLines = 1)
+            }
+            Button(
+                onClick = {
+                    vm.markSamsungHealthLaunch()
+                    val launch = context.packageManager.getLaunchIntentForPackage("com.sec.android.app.shealth")
+                    if (launch == null) {
+                        Toast.makeText(context, "Samsung Health is not installed", Toast.LENGTH_LONG).show()
+                        onToast("Samsung Health isn't installed · meal scanning remains available in SplitCal")
+                    } else {
+                        Toast.makeText(context, "Scan your meal or barcode in Samsung Health, then return to SplitCal to auto-import", Toast.LENGTH_LONG).show()
+                        runCatching { context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                            .onFailure { onToast("Could not open Samsung Health · meal scanning remains available in SplitCal") }
+                    }
+                },
+                modifier = Modifier.weight(1.45f).testTag("scan_samsung_health"),
+                colors = ButtonDefaults.buttonColors(containerColor = MealCyan, contentColor = MealBg)
+            ) { Text("Scan in Samsung Health", fontSize = 9.sp, maxLines = 2) }
         }
+
         state.syncStatus?.let { Text(it, color = if (it.startsWith("Imported") || it.startsWith("Samsung Health sync complete")) MealCyan else MealMuted, fontSize = 10.sp) }
         if (bitmap != null) {
             Card(colors = CardDefaults.cardColors(containerColor = MealCard), shape = RoundedCornerShape(20.dp)) {
                 Box(Modifier.fillMaxWidth().height(220.dp)) {
                     Image(bitmap!!.asImageBitmap(), null, Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)))
-                    if (state.analyzing) ScanLaser(Modifier.fillMaxSize())
+                    if (state.isAnalyzing) ScanLaser(Modifier.fillMaxSize())
                 }
             }
         }
+
         Card(colors = CardDefaults.cardColors(containerColor = MealCard), shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedTextField(prompt, { prompt = it }, modifier = Modifier.fillMaxWidth(), minLines = 2, label = { Text("Meal and customizations") })
-                OutlinedTextField(title, { title = it; vm.updateTitle(it) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Meal title") })
-                Button(enabled = !state.analyzing, onClick = { scope.launch {
-                    vm.setAnalyzing(true)
-                    runCatching { vm.analyzeMeal(context, prompt, bitmap) }
-                        .onSuccess { result ->
-                            title = result.mealTitle
-                            onToast(if (result.usedGemini) "Gemini analysis complete · ${result.activeModel ?: "active model"}" else result.fallbackReason ?: "Offline estimate ready")
+                OutlinedTextField(state.descriptionInput, vm::updateDescription, modifier = Modifier.fillMaxWidth().testTag("meal_description"), minLines = 2, label = { Text("Meal and customizations") })
+                OutlinedTextField(state.mealTitle, vm::updateTitle, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Meal title") })
+                Button(enabled = !state.isAnalyzing, onClick = {
+                    scope.launch {
+                        vm.setAnalyzing(true)
+                        val result = runCatching { vm.analyzeMeal(context, state.descriptionInput, bitmap) }
+                        result.onSuccess { analysis ->
+                            onToast(if (analysis.usedGemini) "Gemini analysis complete · ${analysis.activeModel ?: "active model"}" else analysis.fallbackReason ?: "Offline estimate ready")
+                        }.onFailure { error ->
+                            vm.fail(error.message ?: "Meal analysis failed")
+                            onToast("Meal analysis failed: ${error.message ?: "unknown error"}")
                         }
-                        .onFailure { error -> vm.fail(error.message ?: "Meal analysis failed"); onToast("Meal analysis failed: ${error.message ?: "unknown error"}") }
-                } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) {
-                    Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text(if (state.analyzing) "Analyzing…" else "Analyze meal")
+                    }
+                }, modifier = Modifier.fillMaxWidth().testTag("analyze_meal"), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) {
+                    Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text(if (state.isAnalyzing) "Analyzing…" else "Analyze meal")
                 }
-                state.analysisStatus?.let { Text(it, color = if (it.startsWith("Analyzed with Gemini")) MealGreen else MealCyan, fontSize = 10.sp) }
+                state.statusMessage?.let { Text(it, color = if (state.usedGemini) MealGreen else MealCyan, fontSize = 10.sp, modifier = Modifier.testTag("meal_analysis_status")) }
                 Text("Gemini uses the saved key for online analysis. If the request fails, SplitCal shows the reason and uses the offline estimate.", color = MealMuted, fontSize = 10.sp)
             }
         }
+
         Text("RESTAURANT & TAKEOUT PRESETS", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         LazyRow(Modifier.testTag("meal_presets"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(MealPresets.all) { preset -> AssistChip(onClick = { vm.loadPreset(preset); title = preset.title; onToast("Loaded ${preset.title}") }, modifier = if (preset.title.startsWith("Just Salad · Cilantro Lime")) Modifier.testTag("preset_just_salad") else Modifier, label = { Text(preset.title, fontSize = 10.sp) }) }
-        }
-        Text("ONE-TAP MODIFIERS", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        LazyRow(Modifier.testTag("meal_modifiers"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(listOf("Remove Pita" to "−240 kcal", "Extra Chicken" to "+190 kcal / +36g P", "Sub Greens for Rice" to "−185 kcal", "Extra Hummus Scoop" to "+70 kcal", "No Heavy Sauce" to "−120 kcal")) { (name, detail) ->
-                FilterChip(selected = false, onClick = { vm.applyModification(name); onToast("Applied $name") }, modifier = Modifier.testTag(if (name == "Remove Pita") "modifier_remove_pita" else if (name == "Extra Chicken") "modifier_extra_chicken" else "modifier_${name.lowercase().replace(' ', '_')}"), label = { Text("$name $detail", fontSize = 9.sp) })
+            items(MealPresets.all, key = MealPreset::title) { preset ->
+                AssistChip(onClick = { vm.loadPreset(preset); onToast("Loaded ${preset.title}") }, modifier = if (preset.title.startsWith("Just Salad · Cilantro Lime")) Modifier.testTag("preset_just_salad") else Modifier, label = { Text(preset.title, fontSize = 10.sp) })
             }
         }
-        if (state.savings > 0) AssistChip(onClick = {}, label = { Text("Calorie savings · ${state.savings} kcal") }, colors = AssistChipDefaults.assistChipColors(labelColor = MealGreen))
+
+        Text("ONE-TAP MODIFIERS", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        LazyRow(Modifier.testTag("meal_modifiers"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(ModifierOptions, key = { it.first }) { (name, detail) ->
+                FilterChip(
+                    selected = name in state.activeModifiers,
+                    onClick = { vm.applyModification(name) },
+                    modifier = Modifier.testTag(modifierTag(name)),
+                    label = { Text("$name $detail", fontSize = 9.sp) }
+                )
+            }
+        }
+        if (state.totalSavedCalories > 0) AssistChip(onClick = {}, label = { Text("Calorie savings · ${state.totalSavedCalories} kcal") }, colors = AssistChipDefaults.assistChipColors(labelColor = MealGreen))
+
         Card(colors = CardDefaults.cardColors(containerColor = MealCard), shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("INGREDIENT BREAKDOWN", color = MealWhite, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text("${total.kcal} kcal", color = MealGreen, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, modifier = Modifier.testTag("meal_total_kcal"))
+                    Text("${state.totalCalories} kcal", color = MealGreen, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, modifier = Modifier.testTag("meal_total_kcal"))
                 }
-                state.ingredients.forEachIndexed { index, item ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                state.ingredients.forEach { item ->
+                    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp).testTag("ingredient_${item.id}")) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(item.included, { vm.updateIngredient(index, item.copy(included = it)) }, colors = CheckboxDefaults.colors(checkedColor = MealGreen))
-                            Column(Modifier.weight(1f)) { Text(item.name, color = MealWhite, fontSize = 12.sp); Text("${item.portion} · ${(item.kcal * item.multiplier).toInt()} kcal · ${(item.p * item.multiplier).toInt()}P / ${(item.c * item.multiplier).toInt()}C / ${(item.f * item.multiplier).toInt()}F", color = MealMuted, fontSize = 9.sp) }
+                            Checkbox(item.included, { included -> vm.updateIngredient(item.id) { it.copy(included = included) } }, colors = CheckboxDefaults.colors(checkedColor = MealGreen))
+                            Column(Modifier.weight(1f)) {
+                                Text(item.name, color = MealWhite, fontSize = 12.sp)
+                                Text(
+                                    "${item.portion} · ${if (item.included) item.effectiveCalories else item.savedCalories} kcal · ${item.effectiveProtein}P / ${item.effectiveCarbs}C / ${item.effectiveFat}F",
+                                    color = MealMuted,
+                                    fontSize = 9.sp
+                                )
+                            }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(start = 46.dp)) {
-                            listOf(.5f, 1f, 1.5f, 2f).forEach { m -> FilterChip(item.multiplier == m, { vm.updateIngredient(index, item.copy(multiplier = m)) }, label = { Text("${m}x", fontSize = 9.sp) }) }
+                            listOf(.5f, 1f, 1.5f, 2f).forEach { multiplier ->
+                                FilterChip(
+                                    selected = item.multiplier == multiplier,
+                                    onClick = { vm.updateIngredient(item.id) { it.copy(multiplier = multiplier) } },
+                                    modifier = Modifier.testTag("multiplier_${item.id}_${multiplier}"),
+                                    label = { Text("${multiplier}x", fontSize = 9.sp) }
+                                )
+                            }
                         }
                     }
                 }
-                Text("${total.protein}g protein · ${total.carbs}g carbs · ${total.fat}g fat", color = MealCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { listOf("Breakfast", "Lunch", "Dinner", "Snack").forEach { FilterChip(slot == it, { slot = it }, label = { Text(it, fontSize = 9.sp) }) } }
-                Button(onClick = { vm.logMeal(slot) { status -> onToast("$title saved · ${total.kcal} kcal · $status") } }, modifier = Modifier.fillMaxWidth().testTag("log_meal"), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) { Text(if (state.editingMealId != null) "Save meal edits · ${total.kcal} kcal" else "Log meal · ${total.kcal} kcal") }
+                Text("${state.totalProtein}g protein · ${state.totalCarbs}g carbs · ${state.totalFat}g fat", color = MealCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("meal_total_macros"))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("Breakfast", "Lunch", "Dinner", "Snack").forEach { slot ->
+                        FilterChip(state.selectedSlot == slot, { vm.selectSlot(slot) }, label = { Text(slot, fontSize = 9.sp) })
+                    }
+                }
+
+                Text("ADD INGREDIENT", color = MealWhite, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                OutlinedTextField(customName, { customName = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Ingredient name") })
+                OutlinedTextField(customPortion, { customPortion = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Portion") })
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MacroInput("kcal", customKcal, { customKcal = it }, Modifier.weight(1f))
+                    MacroInput("P", customProtein, { customProtein = it }, Modifier.weight(1f))
+                    MacroInput("C", customCarbs, { customCarbs = it }, Modifier.weight(1f))
+                    MacroInput("F", customFat, { customFat = it }, Modifier.weight(1f))
+                }
+                OutlinedButton(
+                    onClick = {
+                        vm.addCustomIngredient(customName, customPortion, customKcal.toIntOrNull() ?: 0, customProtein.toIntOrNull() ?: 0, customCarbs.toIntOrNull() ?: 0, customFat.toIntOrNull() ?: 0)
+                        customName = ""; customKcal = ""; customProtein = ""; customCarbs = ""; customFat = ""
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("add_ingredient")
+                ) { Text("Add ingredient") }
+
+                Button(onClick = { vm.logMeal { status -> onToast("${state.mealTitle} saved · ${state.totalCalories} kcal · $status") } }, modifier = Modifier.fillMaxWidth().testTag("log_meal"), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) {
+                    Text(if (state.editingMealId != null) "Save meal edits · ${state.totalCalories} kcal" else "Log meal · ${state.totalCalories} kcal")
+                }
                 state.syncStatus?.let { Text(it, color = if (it.startsWith("Synced")) MealGreen else MealMuted, fontSize = 10.sp) }
             }
         }
+
         Text("MEALS · ${dashboard.date}", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        dashboard.meals.forEach { meal -> Card(colors = CardDefaults.cardColors(containerColor = MealCard)) { Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("${meal.slot} · ${meal.name}", color = MealWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp); Text("${meal.protein}P · ${meal.carbs}C · ${meal.fat}F", color = MealMuted, fontSize = 10.sp) }; Text("${meal.kcal} kcal", color = MealGreen, fontSize = 10.sp) }; Row(verticalAlignment = Alignment.CenterVertically) { if (meal.externalRecordId != null) Text(if (meal.externalDataOrigin == "com.sec.android.app.shealth") "Imported from Samsung Health" else "Imported from Health Connect", color = MealCyan, fontSize = 9.sp, modifier = Modifier.weight(1f)) else Spacer(Modifier.weight(1f)); IconButton(onClick = { vm.loadMealForEdit(meal.id); onToast(if (meal.externalRecordId != null) "Loaded imported meal · ingredient breakdown is estimated" else "Loaded meal for editing") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Edit, "Edit meal", tint = MealCyan, modifier = Modifier.size(17.dp)) }; if (meal.externalRecordId != null) TextButton(onClick = { vm.loadMealForEdit(meal.id); onToast("Apply modifiers, then save to update SplitCal and sync an edited copy") }) { Text("Edit / Apply Modifiers", fontSize = 9.sp) }; IconButton(onClick = { vm.deleteMeal(meal.id); onToast("Meal deleted") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete meal", tint = MealMuted, modifier = Modifier.size(17.dp)) } } } } }
+        dashboard.meals.forEach { meal ->
+            Card(colors = CardDefaults.cardColors(containerColor = MealCard)) {
+                Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("${meal.slot} · ${meal.name}", color = MealWhite, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                            Text("${meal.protein}P · ${meal.carbs}C · ${meal.fat}F", color = MealMuted, fontSize = 10.sp)
+                        }
+                        Text("${meal.kcal} kcal", color = MealGreen, fontSize = 10.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (meal.externalRecordId != null) Text(if (meal.externalDataOrigin == "com.sec.android.app.shealth") "Imported from Samsung Health" else "Imported from Health Connect", color = MealCyan, fontSize = 9.sp, modifier = Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+                        IconButton(onClick = { vm.loadMealForEdit(meal.id); onToast(if (meal.externalRecordId != null) "Loaded imported meal · ingredient breakdown is estimated" else "Loaded meal for editing") }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.Edit, "Edit meal", tint = MealCyan, modifier = Modifier.size(17.dp))
+                        }
+                        if (meal.externalRecordId != null) TextButton(onClick = { vm.loadMealForEdit(meal.id); onToast("Apply modifiers, then save to update SplitCal and sync an edited copy") }) { Text("Edit / Apply Modifiers", fontSize = 9.sp) }
+                        IconButton(onClick = { vm.deleteMeal(meal.id); onToast("Meal deleted") }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Delete, "Delete meal", tint = MealMuted, modifier = Modifier.size(17.dp)) }
+                    }
+                }
+            }
+        }
     }
 }
 
-@Composable private fun ScanLaser(modifier: Modifier = Modifier) {
+private val ModifierOptions = listOf(
+    "Remove Pita" to "−240 kcal",
+    "Extra Chicken" to "+190 kcal / +36g P",
+    "Sub Greens for Rice" to "−185 kcal",
+    "Extra Hummus Scoop" to "+70 kcal",
+    "No Heavy Sauce" to "−120 kcal"
+)
+
+private fun modifierTag(name: String) = when (name) {
+    "Remove Pita" -> "modifier_remove_pita"
+    "Extra Chicken" -> "modifier_extra_chicken"
+    else -> "modifier_${name.lowercase().replace(' ', '_')}"
+}
+
+@Composable
+private fun MacroInput(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    OutlinedTextField(value, { input -> onChange(input.filter(Char::isDigit)) }, modifier = modifier, singleLine = true, label = { Text(label) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+}
+
+private fun decodeMealPhoto(context: android.content.Context, uri: Uri): Bitmap {
+    val resolver = context.contentResolver
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: error("Could not read photo")
+    val largest = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
+    val sampleSize = Integer.highestOneBit(ceil(largest / 1024.0).toInt().coerceAtLeast(1)).coerceAtLeast(1)
+    val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+    return resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) } ?: error("Could not decode photo")
+}
+
+@Composable
+private fun ScanLaser(modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "scan")
     val progress by transition.animateFloat(0f, 1f, infiniteRepeatable(tween(1600), RepeatMode.Reverse), label = "scan-line")
     Canvas(modifier) {

@@ -12,7 +12,7 @@ private data class SplitCalBackupPayload(
     val version: Int = 1,
     val dailyLogs: List<DailyLogEntity> = emptyList(),
     val meals: List<MealEntity> = emptyList(),
-    val ingredients: List<IngredientItem> = emptyList(),
+    val ingredients: List<MealIngredientEntity> = emptyList(),
     val workoutSplits: List<WorkoutSplitEntity> = emptyList(),
     val plannedExercises: List<PlannedExerciseEntity> = emptyList(),
     val workoutDays: List<WorkoutDayEntity> = emptyList(),

@@ -42,7 +42,7 @@ data class DailyLogEntity(@PrimaryKey val date: String, val steps: Int = 0)
 data class MealEntity(@PrimaryKey val id: String = UUID.randomUUID().toString(), val date: String, val slot: String, val name: String, val kcal: Int, val protein: Int, val carbs: Int, val fat: Int, val externalRecordId: String? = null, val healthConnectRecordId: String? = null, val externalDataOrigin: String? = null)
 
 @Entity(tableName = "ingredients", foreignKeys = [ForeignKey(entity = MealEntity::class, parentColumns = ["id"], childColumns = ["mealId"], onDelete = ForeignKey.CASCADE)], indices = [Index("mealId")])
-data class IngredientItem(@PrimaryKey val id: String = UUID.randomUUID().toString(), val mealId: String, val name: String, val baseKcal: Int, val baseProtein: Int, val baseCarbs: Int, val baseFat: Int, val multiplier: Float = 1f, val included: Boolean = true)
+data class MealIngredientEntity(@PrimaryKey val id: String = UUID.randomUUID().toString(), val mealId: String, val name: String, val baseKcal: Int, val baseProtein: Int, val baseCarbs: Int, val baseFat: Int, val multiplier: Float = 1f, val included: Boolean = true)
 
 @Entity(tableName = "workout_splits")
 data class WorkoutSplitEntity(@PrimaryKey val id: String, val name: String, val description: String)
@@ -90,7 +90,7 @@ data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val
     @Query("SELECT * FROM exercise_sets") fun allExerciseSets(): Flow<List<ExerciseSetEntity>>
     @Query("SELECT * FROM daily_logs") suspend fun dailyLogsOnce(): List<DailyLogEntity>
     @Query("SELECT * FROM meals") suspend fun mealsOnce(): List<MealEntity>
-    @Query("SELECT * FROM ingredients") suspend fun ingredientsOnce(): List<IngredientItem>
+    @Query("SELECT * FROM ingredients") suspend fun ingredientsOnce(): List<MealIngredientEntity>
     @Query("SELECT * FROM workout_splits") suspend fun splitsOnce(): List<WorkoutSplitEntity>
     @Query("SELECT * FROM planned_exercises") suspend fun plannedExercisesOnce(): List<PlannedExerciseEntity>
     @Query("SELECT * FROM workout_days") suspend fun workoutDaysOnce(): List<WorkoutDayEntity>
@@ -106,7 +106,7 @@ data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val
     @Query("DELETE FROM daily_logs") suspend fun clearDailyLogs()
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun restoreDailyLogs(rows: List<DailyLogEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun restoreMeals(rows: List<MealEntity>)
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun restoreIngredients(rows: List<IngredientItem>)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun restoreIngredients(rows: List<MealIngredientEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun restoreSplits(rows: List<WorkoutSplitEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun restorePlannedExercises(rows: List<PlannedExerciseEntity>)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun restoreWorkoutDays(rows: List<WorkoutDayEntity>)
@@ -121,9 +121,9 @@ data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val
     @Update suspend fun updateMeal(meal: MealEntity)
     @Query("DELETE FROM meals WHERE id = :id") suspend fun deleteMeal(id: String)
     @Query("DELETE FROM ingredients WHERE mealId = :mealId") suspend fun deleteIngredientsForMeal(mealId: String)
-    @Insert suspend fun insertIngredients(items: List<IngredientItem>)
-    @Query("SELECT * FROM ingredients WHERE mealId = :mealId") fun ingredients(mealId: String): Flow<List<IngredientItem>>
-    @Query("SELECT * FROM ingredients WHERE mealId = :mealId") suspend fun ingredientsOnce(mealId: String): List<IngredientItem>
+    @Insert suspend fun insertIngredients(items: List<MealIngredientEntity>)
+    @Query("SELECT * FROM ingredients WHERE mealId = :mealId") fun ingredients(mealId: String): Flow<List<MealIngredientEntity>>
+    @Query("SELECT * FROM ingredients WHERE mealId = :mealId") suspend fun ingredientsOnce(mealId: String): List<MealIngredientEntity>
     @Query("SELECT * FROM workout_splits ORDER BY rowid") fun splits(): Flow<List<WorkoutSplitEntity>>
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertSplits(items: List<WorkoutSplitEntity>)
     @Query("SELECT * FROM planned_exercises WHERE splitId = :splitId AND day = :day ORDER BY rowid") fun exercises(splitId: String, day: Int): Flow<List<PlannedExerciseEntity>>
@@ -144,7 +144,7 @@ data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val
     @Query("SELECT * FROM exercise_sets WHERE date = :date AND isCompleted = 1") fun completedWorkoutSets(date: String): Flow<List<ExerciseSetEntity>>
 }
 
-@Database(entities = [DailyLogEntity::class, MealEntity::class, IngredientItem::class, WorkoutSplitEntity::class, PlannedExerciseEntity::class, WorkoutDayEntity::class, ExerciseEntity::class, ExerciseSetEntity::class], version = 4, exportSchema = false)
+@Database(entities = [DailyLogEntity::class, MealEntity::class, MealIngredientEntity::class, WorkoutSplitEntity::class, PlannedExerciseEntity::class, WorkoutDayEntity::class, ExerciseEntity::class, ExerciseSetEntity::class], version = 4, exportSchema = false)
 @TypeConverters(SplitCalConverters::class)
 abstract class SplitCalDatabase : RoomDatabase() {
     abstract fun dao(): SplitCalDao
@@ -298,7 +298,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     } }
     fun logMeal(slot: String, name: String, totals: IngredientTotals, ingredients: List<IngredientItem>) = viewModelScope.launch {
         val meal = MealEntity(date = date.value.toString(), slot = slot, name = name, kcal = totals.kcal, protein = totals.protein, carbs = totals.carbs, fat = totals.fat)
-        dao.insertMeal(meal); dao.insertIngredients(ingredients.map { it.copy(mealId = meal.id) })
+        dao.insertMeal(meal); dao.insertIngredients(ingredients.map { it.toEntity(meal.id) })
     }
     fun deleteMeal(id: String) = viewModelScope.launch { dao.deleteMeal(id) }
     fun logSet(exercise: PlannedExerciseEntity, weight: Float, reps: Int, rpe: Float, type: String) = viewModelScope.launch {

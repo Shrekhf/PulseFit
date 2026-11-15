@@ -55,6 +55,7 @@ dependencies {
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.guava:guava:33.3.1-android")
     implementation("com.google.code.gson:gson:2.13.1")
+    testImplementation("junit:junit:4.13.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

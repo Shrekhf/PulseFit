@@ -4,9 +4,11 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import kotlinx.coroutines.CancellationException
+import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 
-/** Gemini REST analysis with a clear, deterministic offline fallback. */
+/** Parses Gemini's structured meal response and always supplies a usable offline estimate on failure. */
 class AiMealAnalyzer {
     suspend fun analyze(
         context: Context,
@@ -16,31 +18,73 @@ class AiMealAnalyzer {
         imageUri: Uri? = null,
         selectedModel: String = GeminiApiClient.DEFAULT_MODEL
     ): MealAnalysis {
-        if (apiKey.isBlank()) return fallback(prompt, "No Gemini API key is saved. Enter it in Settings and tap Save settings & targets.")
+        if (apiKey.trim().isEmpty()) {
+            return offline(prompt, "No Gemini API key is saved. Enter it in Settings and tap Save settings & targets.")
+        }
         return try {
-            val instructions = "Analyze the meal photo and user's meal description/customizations. Estimate edible portions and nutrition. Return JSON with mealTitle (string), confidence (integer 0-100), and ingredients (array of objects with name, portion, calories, protein, carbs, fat as numbers, and included as boolean). User prompt: ${prompt.ifBlank { "Identify the pictured meal." }}"
-            val response = GeminiApiClient(context).generateContent(apiKey.trim(), selectedModel, instructions, bitmap, imageUri)
-            parseResponse(response.text).copy(usedGemini = true, activeModel = response.modelId)
+            val instructions = """
+                Analyze this meal. Use the photo when supplied, and use the user's text to identify foods, portion sizes, and requested substitutions or exclusions.
+                Return only a JSON object with this exact shape:
+                {"mealTitle":"string","confidence":0,"ingredients":[{"name":"string","portion":"string","calories":0,"protein":0,"carbs":0,"fat":0,"included":true}]}
+                Include one row per ingredient. Use non-negative integer nutrition values per row. Mark omitted or explicitly removed ingredients included=false.
+                User description and customization: ${prompt.trim().ifBlank { "Identify and estimate the pictured meal." }}
+            """.trimIndent()
+            val result = GeminiApiClient(context).generateContent(apiKey.trim(), selectedModel, instructions, bitmap, imageUri)
+            parseResponse(result.text).copy(usedGemini = true, activeModel = result.modelId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            fallback(prompt, describeFailure(failure))
+            offline(prompt, describeFailure(failure))
         }
     }
 
-    private fun parseResponse(raw: String): MealAnalysis {
-        val jsonText = raw.substringAfter('{', "{").let { "{" + it.substringBeforeLast('}', "}") + "}" }
-        val root = JSONObject(jsonText)
-        val rows = root.getJSONArray("ingredients")
-        val ingredients = (0 until rows.length()).map { i ->
-            val row = rows.getJSONObject(i)
-            IngredientDraft(row.optString("name", "Ingredient"), row.optInt("calories"), row.optInt("protein"), row.optInt("carbs"), row.optInt("fat"), row.optBoolean("included", true), portion = row.optString("portion", "1 serving"))
+    internal fun parseResponse(raw: String): MealAnalysis {
+        val json = extractJson(raw)
+        val title = json.optString("mealTitle").trim().ifBlank { "Meal estimate" }
+        val confidence = number(json.opt("confidence"), 65).coerceIn(0, 100)
+        val rows = json.optJSONArray("ingredients") ?: throw JSONException("Gemini response is missing the ingredients array.")
+        val ingredients = buildList {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                val name = row.optString("name").trim()
+                if (name.isBlank()) continue
+                add(
+                    IngredientItem(
+                        name = name,
+                        portion = row.optString("portion").trim().ifBlank { "1 serving" },
+                        baseCalories = number(row.opt("calories"), 0).coerceAtLeast(0),
+                        baseProtein = number(row.opt("protein"), 0).coerceAtLeast(0),
+                        baseCarbs = number(row.opt("carbs"), 0).coerceAtLeast(0),
+                        baseFat = number(row.opt("fat"), 0).coerceAtLeast(0),
+                        included = row.optBoolean("included", true)
+                    )
+                )
+            }
         }
-        require(ingredients.isNotEmpty()) { "Gemini response contained no ingredients." }
-        return MealAnalysis(root.optString("mealTitle", "Meal estimate"), root.optInt("confidence", 65).coerceIn(0, 100), ingredients)
+        if (ingredients.isEmpty()) throw JSONException("Gemini response has no usable ingredient rows.")
+        return MealAnalysis(title, confidence, ingredients)
     }
 
-    private fun fallback(prompt: String, reason: String) = MealAnalysis("Offline meal estimate", 45, parseMealOffline(prompt), fallbackReason = reason)
+    private fun extractJson(raw: String): JSONObject {
+        val clean = raw.trim().removePrefix("```json").removePrefix("```JSON").removePrefix("```").removeSuffix("```").trim()
+        val start = clean.indexOf('{')
+        val end = clean.lastIndexOf('}')
+        if (start < 0 || end <= start) throw JSONException("Gemini did not return a JSON object.")
+        return JSONObject(clean.substring(start, end + 1))
+    }
+
+    private fun number(value: Any?, fallback: Int): Int = when (value) {
+        is Number -> value.toDouble().takeIf { it.isFinite() }?.toInt() ?: fallback
+        is String -> value.trim().toDoubleOrNull()?.takeIf { it.isFinite() }?.toInt() ?: fallback
+        else -> fallback
+    }
+
+    private fun offline(prompt: String, reason: String) = MealAnalysis(
+        mealTitle = "Offline meal estimate",
+        confidence = 45,
+        ingredients = parseMealOffline(prompt),
+        fallbackReason = reason
+    )
 
     private fun describeFailure(failure: Exception): String {
         if (failure is GeminiRestException) {
@@ -58,9 +102,10 @@ class AiMealAnalyzer {
             .joinToString(" ").lowercase()
         return when {
             "unknownhost" in message || "unable to resolve" in message || "network" in message || "timeout" in message -> "No connection to Gemini. Check internet access and try again."
-            "api_key_invalid" in message || "api key not valid" in message || "invalid api key" in message || "unauthenticated" in message || "http 400" in message || "http 401" in message || "http 403" in message -> "Gemini rejected this API key or request. Check the key and Gemini API access in Google AI Studio."
+            "api_key_invalid" in message || "api key not valid" in message || "invalid api key" in message || "unauthenticated" in message -> "Gemini rejected this API key. Check Gemini API access in Google AI Studio."
             "resource_exhausted" in message || "quota" in message || "429" in message -> "Gemini quota or rate limit is unavailable right now. Check quota and try later."
-            else -> "Gemini request failed (${failure.javaClass.simpleName}). Check the API key, internet connection, and model access."
+            failure is JSONException -> "Gemini responded, but its meal data was not valid JSON. Try again or edit the offline estimate."
+            else -> "Gemini request failed (${failure.javaClass.simpleName}): ${failure.message.orEmpty().take(180)}"
         }
     }
 }
