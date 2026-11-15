@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background

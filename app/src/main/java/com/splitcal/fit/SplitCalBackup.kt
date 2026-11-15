@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.content.Context
 import android.net.Uri
@@ -8,7 +8,7 @@ import com.google.gson.GsonBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private data class PulseFitBackupPayload(
+private data class SplitCalBackupPayload(
     val version: Int = 1,
     val dailyLogs: List<DailyLogEntity> = emptyList(),
     val meals: List<MealEntity> = emptyList(),
@@ -20,12 +20,12 @@ private data class PulseFitBackupPayload(
     val exerciseSets: List<ExerciseSetEntity> = emptyList()
 )
 
-object PulseFitBackup {
+object SplitCalBackup {
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
 
     suspend fun export(context: Context, uri: Uri) = withContext(Dispatchers.IO) {
-        val dao = PulseFitDatabase.get(context.applicationContext as android.app.Application).dao()
-        val backup = PulseFitBackupPayload(
+        val dao = SplitCalDatabase.get(context.applicationContext as android.app.Application).dao()
+        val backup = SplitCalBackupPayload(
             dailyLogs = dao.dailyLogsOnce(), meals = dao.mealsOnce(), ingredients = dao.ingredientsOnce(),
             workoutSplits = dao.splitsOnce(), plannedExercises = dao.plannedExercisesOnce(), workoutDays = dao.workoutDaysOnce(),
             exercises = dao.exerciseEntitiesOnce(), exerciseSets = dao.exerciseSetsOnce()
@@ -37,9 +37,9 @@ object PulseFitBackup {
     suspend fun restore(context: Context, uri: Uri) = withContext(Dispatchers.IO) {
         val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
             ?: error("Could not open the selected backup file")
-        val backup = gson.fromJson(json, PulseFitBackupPayload::class.java) ?: error("Backup file is empty or invalid")
+        val backup = gson.fromJson(json, SplitCalBackupPayload::class.java) ?: error("Backup file is empty or invalid")
         require(backup.version == 1) { "This backup version is not supported" }
-        val db = PulseFitDatabase.get(context.applicationContext as android.app.Application)
+        val db = SplitCalDatabase.get(context.applicationContext as android.app.Application)
         db.withTransaction {
             val dao = db.dao()
             dao.clearIngredients(); dao.clearMeals(); dao.clearExerciseSets(); dao.clearPlannedExercises()

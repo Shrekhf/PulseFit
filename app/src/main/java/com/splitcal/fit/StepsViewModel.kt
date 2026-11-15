@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.app.Application
 import android.app.Activity
@@ -28,8 +28,8 @@ data class StepsUiState(
 
 class StepsViewModel(application: Application) : AndroidViewModel(application) {
     private val repo = SamsungHealthRepository(application)
-    private val dao = PulseFitDatabase.get(application).dao()
-    private val prefs = application.pulseFitPrefs
+    private val dao = SplitCalDatabase.get(application).dao()
+    private val prefs = application.splitCalPrefs
     private var selectedDate = LocalDate.now().toString()
     private val _state = MutableStateFlow(StepsUiState(sdkAvailable = repo.samsungSdkDataSource.isAvailable))
     val state: StateFlow<StepsUiState> = _state.asStateFlow()

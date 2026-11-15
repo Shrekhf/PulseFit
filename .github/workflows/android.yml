@@ -25,5 +25,5 @@ jobs:
         run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: pulsefit-debug-apk
+          name: splitcal-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk

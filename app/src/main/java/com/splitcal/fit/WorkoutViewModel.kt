@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.app.Application
 import android.media.AudioManager
@@ -75,8 +75,8 @@ data class WorkoutUiState(
 )
 
 class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
-    private val dao = PulseFitDatabase.get(app).dao()
-    private val prefs = app.pulseFitPrefs
+    private val dao = SplitCalDatabase.get(app).dao()
+    private val prefs = app.splitCalPrefs
     private val healthSyncBridge = HealthSyncBridge(app)
     private val samsungHealthRepository = SamsungHealthRepository(app)
     private val selectedDate = MutableStateFlow(LocalDate.now().toString())

@@ -1,6 +1,6 @@
-# PulseFit AI for Android
+# SplitCal for Android
 
-Native Kotlin / Jetpack Compose fitness planner based on the supplied PulseFit AI prototype.
+Native Kotlin / Jetpack Compose fitness planner based on the supplied SplitCal prototype.
 
 ## App features
 
@@ -26,7 +26,7 @@ Install Android SDK Platform 36 and Build Tools 36.0.0, then run from this direc
 .\gradlew.bat assembleDebug
 ```
 
-The APK is generated at `app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions builds the same APK on pushes and manual workflow runs; download `pulsefit-debug-apk` from the run's Artifacts section.
+The APK is generated at `app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions builds the same APK on pushes and manual workflow runs; download `splitcal-debug-apk` from the run's Artifacts section.
 
 ## AI and privacy
 

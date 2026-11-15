@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.os.Bundle
 import android.os.SystemClock
@@ -80,11 +80,11 @@ private val Muted = Color(0xFF94A3B8)
 private val White = Color(0xFFF8FAFC)
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { PulseFitApp() } }
+    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); setContent { SplitCalApp() } }
 }
 
 @Composable
-private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
+private fun SplitCalApp(vm: DashboardViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     val workoutVm: WorkoutViewModel = viewModel()
     val mealVm: MealViewModel = viewModel()
@@ -107,10 +107,10 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
         else scope.launch { snackbar.showSnackbar("No Health Connect permissions granted") }
     }
     val backupExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch { runCatching { PulseFitBackup.export(context, uri) }.onSuccess { snackbar.showSnackbar("PulseFit backup exported") }.onFailure { snackbar.showSnackbar("Backup export failed: ${it.message}") } }
+        if (uri != null) scope.launch { runCatching { SplitCalBackup.export(context, uri) }.onSuccess { snackbar.showSnackbar("SplitCal backup exported") }.onFailure { snackbar.showSnackbar("Backup export failed: ${it.message}") } }
     }
     val backupImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch { runCatching { PulseFitBackup.restore(context, uri) }.onSuccess { snackbar.showSnackbar("Backup restored") }.onFailure { snackbar.showSnackbar("Restore failed: ${it.message}") } }
+        if (uri != null) scope.launch { runCatching { SplitCalBackup.restore(context, uri) }.onSuccess { snackbar.showSnackbar("Backup restored") }.onFailure { snackbar.showSnackbar("Restore failed: ${it.message}") } }
     }
     LaunchedEffect(state.date) {
         workoutVm.setDate(state.date)
@@ -126,7 +126,7 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
         if (lifecycle.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) tracker?.start()
         onDispose { lifecycle.lifecycle.removeObserver(observer); tracker?.stop() }
     }
-    MaterialTheme(colorScheme = darkColorScheme(primary = Emerald, secondary = Cyan, background = Bg, surface = Card, onBackground = White, onSurface = White)) {
+    SplitCalTheme {
         Scaffold(containerColor = Bg, snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
             NavigationBar(containerColor = Color(0xFF0F172A)) {
                 val entries = listOf(Icons.Default.Dashboard to "Dashboard", Icons.Default.FitnessCenter to "AI Gym Planner", Icons.Default.CameraAlt to "AI Meal Scanner", Icons.AutoMirrored.Filled.DirectionsWalk to "Health Steps")
@@ -149,14 +149,19 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
                 }
             }
         }
-        if (showProfile) ProfileSheet(state.settings, onDismiss = { showProfile = false }, onSave = { vm.saveSettings(it); showProfile = false; scope.launch { snackbar.showSnackbar("Settings saved") } }, onExport = { backupExport.launch("pulsefit-backup-${state.date}.json") }, onImport = { backupImport.launch(arrayOf("application/json", "text/json", "text/plain")) })
+        if (showProfile) ProfileSheet(state.settings, onDismiss = { showProfile = false }, onSave = { vm.saveSettings(it); showProfile = false; scope.launch { snackbar.showSnackbar("Settings saved") } }, onExport = { backupExport.launch("splitcal-backup-${state.date}.json") }, onImport = { backupImport.launch(arrayOf("application/json", "text/json", "text/plain")) })
     }
+}
+
+@Composable
+private fun SplitCalTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = darkColorScheme(primary = Emerald, secondary = Cyan, background = Bg, surface = Card, onBackground = White, onSurface = White), content = content)
 }
 
 private class StepCounterTracker(context: android.content.Context, private val vm: DashboardViewModel) : SensorEventListener {
     private val manager = context.getSystemService(SensorManager::class.java)
     private val sensor = manager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-    private val prefs = context.getSharedPreferences("pulsefit_step_sensor", 0)
+    private val prefs = context.getSharedPreferences("splitcal_step_sensor", 0)
     fun start() { sensor?.let { manager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) } }
     fun stop() { manager.unregisterListener(this) }
     override fun onSensorChanged(event: SensorEvent) {
@@ -180,7 +185,7 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Emerald), Alignment.Center) { Icon(Icons.Default.Favorite, null, tint = Bg) }
-            Column { Text("PulseFit AI", color = White, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text("COACH · VISION · HEALTH", color = Emerald, fontWeight = FontWeight.Bold, fontSize = 8.sp, letterSpacing = 1.sp) }
+            Column { Text("SplitCal", color = White, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text("COACH · VISION · HEALTH", color = Emerald, fontWeight = FontWeight.Bold, fontSize = 8.sp, letterSpacing = 1.sp) }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("%02d:%02d".format(seconds / 60, seconds % 60), color = Cyan, fontWeight = FontWeight.Bold)
@@ -209,7 +214,7 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { item { Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = content) } }
 }
 
-@Composable private fun Dashboard(s: PulseFitUiState, onWorkout: () -> Unit, onMeals: () -> Unit, onSteps: () -> Unit, onProfile: () -> Unit) {
+@Composable private fun Dashboard(s: SplitCalUiState, onWorkout: () -> Unit, onMeals: () -> Unit, onSteps: () -> Unit, onProfile: () -> Unit) {
     ScrollPage {
         Text(LocalDate.parse(s.date).let { "${it.dayOfWeek.name.lowercase().replaceFirstChar(Char::uppercase)}, ${it.month.name.lowercase().replaceFirstChar(Char::uppercase)} ${it.dayOfMonth}" }, color = White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -281,7 +286,7 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
 
 @Composable private fun NumberField(label: String, value: String, update: (String) -> Unit) { OutlinedTextField(value, update, label = { Text(label) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = White, unfocusedTextColor = White, focusedBorderColor = Emerald, unfocusedBorderColor = Muted, focusedLabelColor = Emerald, unfocusedLabelColor = Muted), modifier = Modifier.fillMaxWidth()) }
 
-@Composable private fun StepsScreen(s: PulseFitUiState, vm: DashboardViewModel, onConnect: () -> Unit, onSensor: () -> Unit) {
+@Composable private fun StepsScreen(s: SplitCalUiState, vm: DashboardViewModel, onConnect: () -> Unit, onSensor: () -> Unit) {
     var manual by remember(s.steps) { mutableFloatStateOf(s.steps.toFloat()) }
     ScrollPage {
         Column { Text("HEALTH STEPS", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp); Text("Step sync & calibration", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
@@ -290,7 +295,7 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
             Text("HEALTH CONNECT", color = Cyan, fontWeight = FontWeight.Bold, fontSize = 10.sp); Text(s.healthStatus, color = White, fontSize = 12.sp)
             Button(onClick = onConnect, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Raised, contentColor = Cyan)) { Icon(Icons.Default.Sync, null); Text("Connect / sync Health Connect") }
             OutlinedButton(onClick = onSensor, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.DirectionsRun, null); Text("Enable phone step sensor") }
-            Text("The hardware step counter updates while PulseFit is open. Health Connect remains the primary all-day source.", color = Muted, fontSize = 10.sp)
+            Text("The hardware step counter updates while SplitCal is open. Health Connect remains the primary all-day source.", color = Muted, fontSize = 10.sp)
             Slider(value = manual, onValueChange = { manual = it }, valueRange = 0f..30000f, steps = 199); Text("Manual: ${manual.toInt()} steps", color = White)
             Button(onClick = { vm.updateSteps(manual.toInt()) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg)) { Text("Save manual step count") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(500, 1800, 5000).forEach { delta -> OutlinedButton(onClick = { vm.updateSteps(s.steps + delta) }, modifier = Modifier.weight(1f)) { Text("+${delta}") } } }

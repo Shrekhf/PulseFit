@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient

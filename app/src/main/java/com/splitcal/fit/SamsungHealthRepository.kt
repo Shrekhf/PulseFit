@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.content.Context
 import android.app.Activity
@@ -65,7 +65,7 @@ class SamsungHealthRepository(
 
     suspend fun includeAllOrigins(): Boolean = !preferences.preferSamsungHealthOrigin.first()
     suspend fun setIncludeAllOrigins(include: Boolean) {
-        (context.applicationContext as android.app.Application).pulseFitPrefs.edit { it[PREFER_SAMSUNG_HEALTH_ORIGIN] = !include }
+        (context.applicationContext as android.app.Application).splitCalPrefs.edit { it[PREFER_SAMSUNG_HEALTH_ORIGIN] = !include }
     }
 
     suspend fun readToday(): SamsungHealthSnapshot? = readDay(LocalDate.now())
@@ -150,6 +150,6 @@ class SamsungHealthDataSdkFallback : SamsungHealthDataSdkDataSource {
 }
 
 fun createSamsungHealthDataSdkDataSource(context: Context): SamsungHealthDataSdkDataSource = runCatching {
-    val adapterClass = Class.forName("com.pulsefit.app.SamsungHealthDataSdkAdapter")
+    val adapterClass = Class.forName("com.splitcal.fit.SamsungHealthDataSdkAdapter")
     adapterClass.getConstructor(Context::class.java).newInstance(context) as SamsungHealthDataSdkDataSource
 }.getOrElse { SamsungHealthDataSdkFallback() }

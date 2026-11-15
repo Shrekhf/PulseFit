@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -47,7 +47,7 @@ private val MealMuted = Color(0xFF94A3B8)
 private val MealWhite = Color(0xFFF8FAFC)
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun MealScannerScreen(dashboard: PulseFitUiState, vm: MealViewModel, onToast: (String) -> Unit) {
+@Composable fun MealScannerScreen(dashboard: SplitCalUiState, vm: MealViewModel, onToast: (String) -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

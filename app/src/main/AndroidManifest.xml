@@ -18,7 +18,7 @@
         <package android:name="com.sec.android.app.shealth" />
         <package android:name="com.google.android.apps.healthdata" />
     </queries>
-    <application android:theme="@style/AppTheme" android:label="PulseFit AI" android:allowBackup="true">
+    <application android:theme="@style/AppTheme" android:label="@string/app_name" android:allowBackup="true">
         <activity-alias android:name=".HealthConnectPermissionUsage" android:exported="true" android:targetActivity=".MainActivity" android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />

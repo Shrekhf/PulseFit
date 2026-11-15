@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.content.Intent
 import android.net.Uri
@@ -34,7 +34,7 @@ private val StepWhite = Color(0xFFF8FAFC)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun StepsScreen(
-    dashboard: PulseFitUiState,
+    dashboard: SplitCalUiState,
     vm: StepsViewModel,
     onConnectHealthConnect: () -> Unit,
     onEnableSensor: () -> Unit

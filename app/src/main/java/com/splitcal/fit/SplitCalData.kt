@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.app.Application
 import android.content.Context
@@ -24,13 +24,13 @@ import java.time.LocalDate
 import java.util.UUID
 import kotlinx.coroutines.delay
 
-val Application.pulseFitPrefs by preferencesDataStore("pulsefit_settings")
+val Application.splitCalPrefs by preferencesDataStore("splitcal_prefs")
 
 val PREFER_SAMSUNG_HEALTH_ORIGIN = booleanPreferencesKey("prefer_samsung_health_origin")
 val AUTO_WRITE_TO_SAMSUNG_HEALTH = booleanPreferencesKey("auto_write_to_samsung_health")
 
 class UserPreferencesRepository(private val context: Context) {
-    private val store = (context.applicationContext as Application).pulseFitPrefs
+    private val store = (context.applicationContext as Application).splitCalPrefs
     val preferSamsungHealthOrigin: Flow<Boolean> = store.data.map { it[PREFER_SAMSUNG_HEALTH_ORIGIN] ?: true }
     val autoWriteToSamsungHealth: Flow<Boolean> = store.data.map { it[AUTO_WRITE_TO_SAMSUNG_HEALTH] ?: true }
 }
@@ -52,7 +52,7 @@ data class PlannedExerciseEntity(@PrimaryKey val id: String, val splitId: String
 
 enum class SetType { WARMUP, WORKING, DROP, FAILURE }
 
-class PulseFitConverters {
+class SplitCalConverters {
     @TypeConverter fun setTypeToString(value: SetType): String = value.name
     @TypeConverter fun stringToSetType(value: String): SetType = runCatching { SetType.valueOf(value) }.getOrDefault(SetType.WORKING)
 }
@@ -84,7 +84,7 @@ data class ExerciseSetEntity(
 
 data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val fat: Int)
 
-@Dao interface PulseFitDao {
+@Dao interface SplitCalDao {
     @Query("SELECT * FROM daily_logs") fun allDailyLogs(): Flow<List<DailyLogEntity>>
     @Query("SELECT * FROM meals") fun allMeals(): Flow<List<MealEntity>>
     @Query("SELECT * FROM exercise_sets") fun allExerciseSets(): Flow<List<ExerciseSetEntity>>
@@ -144,13 +144,13 @@ data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val
 }
 
 @Database(entities = [DailyLogEntity::class, MealEntity::class, IngredientItem::class, WorkoutSplitEntity::class, PlannedExerciseEntity::class, WorkoutDayEntity::class, ExerciseEntity::class, ExerciseSetEntity::class], version = 3, exportSchema = false)
-@TypeConverters(PulseFitConverters::class)
-abstract class PulseFitDatabase : RoomDatabase() {
-    abstract fun dao(): PulseFitDao
+@TypeConverters(SplitCalConverters::class)
+abstract class SplitCalDatabase : RoomDatabase() {
+    abstract fun dao(): SplitCalDao
     companion object {
-        @Volatile private var instance: PulseFitDatabase? = null
-        fun get(app: Application): PulseFitDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(app, PulseFitDatabase::class.java, "pulsefit.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+        @Volatile private var instance: SplitCalDatabase? = null
+        fun get(app: Application): SplitCalDatabase = instance ?: synchronized(this) {
+            instance ?: Room.databaseBuilder(app, SplitCalDatabase::class.java, "splitcal_db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -180,7 +180,7 @@ data class Settings(val calorieTarget: Int = 2150, val proteinTarget: Int = 185,
 
 data class DailyChartPoint(val date: String, val intake: Int, val burn: Int)
 
-data class PulseFitUiState(
+data class SplitCalUiState(
     val date: String = LocalDate.now().toString(), val steps: Int = 12450, val settings: Settings = Settings(), val meals: List<MealEntity> = emptyList(),
     val sets: List<ExerciseSetEntity> = emptyList(), val splits: List<WorkoutSplitEntity> = emptyList(), val selectedSplitId: String = "bro_split",
     val selectedDay: Int = LocalDate.now().dayOfWeek.value - 1, val exercises: List<PlannedExerciseEntity> = emptyList(), val healthStatus: String = "Manual step entry",
@@ -196,13 +196,13 @@ data class PulseFitUiState(
 }
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
-    private val dao = PulseFitDatabase.get(application).dao()
+    private val dao = SplitCalDatabase.get(application).dao()
     private val app = application
     private val date = MutableStateFlow(LocalDate.now())
-    private val splitId = app.pulseFitPrefs.data.map { it[stringPreferencesKey("active_split")] ?: "bro_split" }.stateIn(viewModelScope, SharingStarted.Eagerly, "bro_split")
+    private val splitId = app.splitCalPrefs.data.map { it[stringPreferencesKey("active_split")] ?: "bro_split" }.stateIn(viewModelScope, SharingStarted.Eagerly, "bro_split")
     private val selectedDay = MutableStateFlow(LocalDate.now().dayOfWeek.value - 1)
     private val healthStatus = MutableStateFlow("Manual step entry · Health Connect available")
-    private val settingsFlow = app.pulseFitPrefs.data.map { p -> Settings(
+    private val settingsFlow = app.splitCalPrefs.data.map { p -> Settings(
         calorieTarget = p[intPreferencesKey("calories")] ?: 2150,
         proteinTarget = p[intPreferencesKey("protein")] ?: 185,
         carbTarget = p[intPreferencesKey("carbs")] ?: 200,
@@ -214,7 +214,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         preferSamsungOrigin = p[PREFER_SAMSUNG_HEALTH_ORIGIN] ?: true,
         autoWriteSamsung = p[AUTO_WRITE_TO_SAMSUNG_HEALTH] ?: true
     ) }
-    val state: StateFlow<PulseFitUiState> = date.flatMapLatest { selected -> combine(
+    val state: StateFlow<SplitCalUiState> = date.flatMapLatest { selected -> combine(
         dao.dailyLog(selected.toString()), dao.meals(selected.toString()), dao.exerciseSets(selected.toString()), dao.splits(), settingsFlow, splitId, selectedDay, healthStatus,
         dao.allDailyLogs(), dao.allMeals(), dao.allExerciseSets()
     ) { values ->
@@ -236,10 +236,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         val weekStart = selected.minusDays((selected.dayOfWeek.value - 1).toLong())
         val days = (0..6).map { weekStart.plusDays(it.toLong()) }
         val week = days.map { d -> DailyChartPoint(d.toString(), allMeals.filter { it.date == d.toString() }.sumOf { it.kcal }, logs.firstOrNull { it.date == d.toString() }?.steps?.let { StepBurnCalculator.calibrated(it, settings.calibrationMode, if (d == LocalDate.now()) settings.wearableActiveCalories else null) }.orZero() + allSets.filter { it.date == d.toString() && it.isCompleted }.sumOf { it.burnCalories }) }
-        PulseFitUiState(selectedDate, log?.steps ?: 0, settings, meals, sets, splits, sid, day, emptyList(), status, stepStreak, gymStreak, week)
+        SplitCalUiState(selectedDate, log?.steps ?: 0, settings, meals, sets, splits, sid, day, emptyList(), status, stepStreak, gymStreak, week)
     }.flatMapLatest { base ->
         dao.exercises(base.selectedSplitId, base.selectedDay).map { base.copy(exercises = it) }
-    } }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PulseFitUiState(date = LocalDate.now().toString()))
+    } }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SplitCalUiState(date = LocalDate.now().toString()))
 
     init { viewModelScope.launch { seedSplits() } }
 
@@ -272,12 +272,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         definitions.forEach { (id, days) -> dao.insertPlannedExercises(days.flatMapIndexed { day, (focus, names) -> names.mapIndexed { index, name -> PlannedExerciseEntity("$id-$day-$index", id, day, name, 3 + (index % 2), "8–12", 90, if (names.isEmpty()) 0 else 35) } }) }
     }
 
-    fun selectSplit(id: String) { viewModelScope.launch { app.pulseFitPrefs.edit { it[stringPreferencesKey("active_split")] = id } } }
+    fun selectSplit(id: String) { viewModelScope.launch { app.splitCalPrefs.edit { it[stringPreferencesKey("active_split")] = id } } }
     fun selectDay(day: Int) { selectedDay.value = day }
     fun setHealthStatus(status: String) { healthStatus.value = status }
     fun updateSteps(value: Int) = viewModelScope.launch { dao.putDailyLog(DailyLogEntity(date.value.toString(), value.coerceAtLeast(0))) }
-    fun setSamsungPreferences(prefer: Boolean, autoWrite: Boolean) = viewModelScope.launch { app.pulseFitPrefs.edit { it[PREFER_SAMSUNG_HEALTH_ORIGIN] = prefer; it[AUTO_WRITE_TO_SAMSUNG_HEALTH] = autoWrite } }
-    fun saveSettings(settings: Settings) = viewModelScope.launch { app.pulseFitPrefs.edit { p ->
+    fun setSamsungPreferences(prefer: Boolean, autoWrite: Boolean) = viewModelScope.launch { app.splitCalPrefs.edit { it[PREFER_SAMSUNG_HEALTH_ORIGIN] = prefer; it[AUTO_WRITE_TO_SAMSUNG_HEALTH] = autoWrite } }
+    fun saveSettings(settings: Settings) = viewModelScope.launch { app.splitCalPrefs.edit { p ->
         p[intPreferencesKey("calories")] = settings.calorieTarget; p[intPreferencesKey("protein")] = settings.proteinTarget
         p[intPreferencesKey("carbs")] = settings.carbTarget; p[intPreferencesKey("fat")] = settings.fatTarget
         p[intPreferencesKey("step_goal")] = settings.stepGoal; p[stringPreferencesKey("calibration")] = settings.calibrationMode

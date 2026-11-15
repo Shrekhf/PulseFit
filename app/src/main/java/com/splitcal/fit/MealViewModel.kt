@@ -1,4 +1,4 @@
-package com.pulsefit.app
+package com.splitcal.fit
 
 import android.app.Application
 import android.graphics.Bitmap
@@ -18,7 +18,7 @@ data class MealAnalysis(val mealTitle: String, val confidence: Int, val ingredie
 data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null, val editingMealId: String? = null, val editingSlot: String? = null)
 
 class MealViewModel(application: Application) : AndroidViewModel(application) {
-    private val dao = PulseFitDatabase.get(application).dao()
+    private val dao = SplitCalDatabase.get(application).dao()
     private val healthSyncBridge = HealthSyncBridge(application)
     private var selectedDate: String = LocalDate.now().toString()
     private val _state = MutableStateFlow(MealScannerState(ingredients = parseMealOffline("chicken bowl with greens, rice, beans and sauce")))
