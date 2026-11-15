@@ -1,6 +1,13 @@
 package com.pulsefit.app
 
 import android.app.Application
+import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
+import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -8,12 +15,15 @@ import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.util.UUID
+import kotlinx.coroutines.delay
 
-private val Application.pulseFitPrefs by preferencesDataStore("pulsefit_settings")
+val Application.pulseFitPrefs by preferencesDataStore("pulsefit_settings")
 
 @Entity(tableName = "daily_logs")
 data class DailyLogEntity(@PrimaryKey val date: String, val steps: Int = 0)
@@ -30,8 +40,37 @@ data class WorkoutSplitEntity(@PrimaryKey val id: String, val name: String, val 
 @Entity(tableName = "planned_exercises", foreignKeys = [ForeignKey(entity = WorkoutSplitEntity::class, parentColumns = ["id"], childColumns = ["splitId"], onDelete = ForeignKey.CASCADE)], indices = [Index("splitId")])
 data class PlannedExerciseEntity(@PrimaryKey val id: String, val splitId: String, val day: Int, val name: String, val sets: Int, val reps: String, val restSeconds: Int, val burnCalories: Int)
 
-@Entity(tableName = "exercise_sets", indices = [Index("date")])
-data class ExerciseSetEntity(@PrimaryKey val id: String = UUID.randomUUID().toString(), val date: String, val exerciseName: String, val weight: Float, val reps: Int, val rpe: Float, val type: String, val completed: Boolean = true, val burnCalories: Int = 0)
+enum class SetType { WARMUP, WORKING, DROP, FAILURE }
+
+class PulseFitConverters {
+    @TypeConverter fun setTypeToString(value: SetType): String = value.name
+    @TypeConverter fun stringToSetType(value: String): SetType = runCatching { SetType.valueOf(value) }.getOrDefault(SetType.WORKING)
+}
+
+@Entity(tableName = "workout_days", foreignKeys = [ForeignKey(entity = WorkoutSplitEntity::class, parentColumns = ["id"], childColumns = ["splitId"], onDelete = ForeignKey.CASCADE)], indices = [Index("splitId"), Index(value = ["splitId", "dayIndex"], unique = true)])
+data class WorkoutDayEntity(@PrimaryKey val id: String, val splitId: String, val dayIndex: Int, val focus: String, val notes: String, val estimatedBurnCalories: Int = 0)
+
+@Entity(tableName = "exercises", foreignKeys = [ForeignKey(entity = WorkoutDayEntity::class, parentColumns = ["id"], childColumns = ["workoutDayId"], onDelete = ForeignKey.CASCADE)], indices = [Index("workoutDayId")])
+data class ExerciseEntity(@PrimaryKey val id: String, val workoutDayId: String, val name: String, val sortOrder: Int, val plannedSets: Int, val repRange: String, val restSeconds: Int, val equipment: String, val jointNote: String)
+
+@Entity(tableName = "exercise_sets", indices = [Index("date"), Index("exerciseName"), Index("exerciseId")])
+data class ExerciseSetEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val date: String,
+    val exerciseName: String,
+    val exerciseId: String = "",
+    val setNumber: Int = 1,
+    val setType: SetType = SetType.WORKING,
+    val weightLbs: Float = 0f,
+    val reps: Int = 0,
+    val rpe: Float = 8f,
+    val isCompleted: Boolean = false,
+    val burnCalories: Int = 0,
+    // Kept for migration compatibility with the original prototype schema.
+    val weight: Float = 0f,
+    val type: String = "Working",
+    @ColumnInfo(name = "completed") val legacyCompleted: Boolean = false
+)
 
 data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val fat: Int)
 
@@ -47,18 +86,51 @@ data class IngredientTotals(val kcal: Int, val protein: Int, val carbs: Int, val
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertSplits(items: List<WorkoutSplitEntity>)
     @Query("SELECT * FROM planned_exercises WHERE splitId = :splitId AND day = :day ORDER BY rowid") fun exercises(splitId: String, day: Int): Flow<List<PlannedExerciseEntity>>
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertPlannedExercises(items: List<PlannedExerciseEntity>)
-    @Query("SELECT * FROM exercise_sets WHERE date = :date") fun exerciseSets(date: String): Flow<List<ExerciseSetEntity>>
+    @Query("SELECT * FROM exercise_sets WHERE date = :date ORDER BY rowid") fun exerciseSets(date: String): Flow<List<ExerciseSetEntity>>
     @Insert suspend fun insertSet(set: ExerciseSetEntity)
-    @Query("UPDATE exercise_sets SET completed = :complete WHERE id = :id") suspend fun setComplete(id: String, complete: Boolean)
+    @Update suspend fun updateSet(set: ExerciseSetEntity)
+    @Query("UPDATE exercise_sets SET completed = :complete, isCompleted = :complete WHERE id = :id") suspend fun setComplete(id: String, complete: Boolean)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertWorkoutDays(items: List<WorkoutDayEntity>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertExerciseEntities(items: List<ExerciseEntity>)
+    @Update suspend fun updateExerciseEntity(item: ExerciseEntity)
+    @Query("SELECT * FROM workout_days WHERE splitId = :splitId ORDER BY dayIndex") fun workoutDays(splitId: String): Flow<List<WorkoutDayEntity>>
+    @Query("SELECT * FROM exercises WHERE workoutDayId = :dayId ORDER BY sortOrder") fun exerciseEntities(dayId: String): Flow<List<ExerciseEntity>>
+    @Query("SELECT * FROM exercise_sets WHERE date = :date AND exerciseId = :exerciseId ORDER BY setNumber") fun setsForExercise(date: String, exerciseId: String): Flow<List<ExerciseSetEntity>>
+    @Query("SELECT * FROM exercise_sets WHERE date = :date AND exerciseId = :exerciseId ORDER BY setNumber") suspend fun setsForExerciseOnce(date: String, exerciseId: String): List<ExerciseSetEntity>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertWorkoutSet(set: ExerciseSetEntity)
+    @Query("SELECT * FROM workout_splits ORDER BY rowid") suspend fun workoutSplitsOnce(): List<WorkoutSplitEntity>
+    @Query("SELECT * FROM exercise_sets WHERE date = :date AND isCompleted = 1") fun completedWorkoutSets(date: String): Flow<List<ExerciseSetEntity>>
 }
 
-@Database(entities = [DailyLogEntity::class, MealEntity::class, IngredientItem::class, WorkoutSplitEntity::class, PlannedExerciseEntity::class, ExerciseSetEntity::class], version = 1, exportSchema = false)
+@Database(entities = [DailyLogEntity::class, MealEntity::class, IngredientItem::class, WorkoutSplitEntity::class, PlannedExerciseEntity::class, WorkoutDayEntity::class, ExerciseEntity::class, ExerciseSetEntity::class], version = 3, exportSchema = false)
+@TypeConverters(PulseFitConverters::class)
 abstract class PulseFitDatabase : RoomDatabase() {
     abstract fun dao(): PulseFitDao
     companion object {
         @Volatile private var instance: PulseFitDatabase? = null
         fun get(app: Application): PulseFitDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(app, PulseFitDatabase::class.java, "pulsefit.db").build().also { instance = it }
+            instance ?: Room.databaseBuilder(app, PulseFitDatabase::class.java, "pulsefit.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+        }
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS workout_days (id TEXT NOT NULL PRIMARY KEY, splitId TEXT NOT NULL, dayIndex INTEGER NOT NULL, focus TEXT NOT NULL, notes TEXT NOT NULL, estimatedBurnCalories INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(splitId) REFERENCES workout_splits(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_workout_days_splitId ON workout_days(splitId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_workout_days_splitId_dayIndex ON workout_days(splitId, dayIndex)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS exercises (id TEXT NOT NULL PRIMARY KEY, workoutDayId TEXT NOT NULL, name TEXT NOT NULL, sortOrder INTEGER NOT NULL, plannedSets INTEGER NOT NULL, repRange TEXT NOT NULL, restSeconds INTEGER NOT NULL, equipment TEXT NOT NULL, jointNote TEXT NOT NULL, FOREIGN KEY(workoutDayId) REFERENCES workout_days(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_exercises_workoutDayId ON exercises(workoutDayId)")
+                db.execSQL("ALTER TABLE exercise_sets ADD COLUMN setNumber INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE exercise_sets ADD COLUMN setType TEXT NOT NULL DEFAULT 'WORKING'")
+                db.execSQL("ALTER TABLE exercise_sets ADD COLUMN weightLbs REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE exercise_sets ADD COLUMN isCompleted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE exercise_sets SET weightLbs = weight, isCompleted = completed, setType = CASE lower(type) WHEN 'warmup' THEN 'WARMUP' WHEN 'drop' THEN 'DROP' WHEN 'failure' THEN 'FAILURE' ELSE 'WORKING' END")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_exercise_sets_exerciseName ON exercise_sets(exerciseName)")
+            }
+        }
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE exercise_sets ADD COLUMN exerciseId TEXT NOT NULL DEFAULT ''")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_exercise_sets_exerciseId ON exercise_sets(exerciseId)")
+            }
         }
     }
 }
@@ -75,7 +147,7 @@ data class PulseFitUiState(
     val carbs get() = meals.sumOf { it.carbs }
     val fat get() = meals.sumOf { it.fat }
     val stepBurn get() = steps * when (settings.calibrationMode) { "tracker_high" -> 700; "conservative" -> 420; else -> 500 } / 15000
-    val workoutBurn get() = sets.filter { it.completed }.sumOf { it.burnCalories }
+    val workoutBurn get() = sets.filter { it.legacyCompleted }.sumOf { it.burnCalories }
     val remaining get() = settings.calorieTarget - intake + stepBurn + workoutBurn
 }
 
@@ -83,7 +155,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val dao = PulseFitDatabase.get(application).dao()
     private val app = application
     private val date = LocalDate.now().toString()
-    private val splitId = MutableStateFlow("bro_split")
+    private val splitId = app.pulseFitPrefs.data.map { it[stringPreferencesKey("active_split")] ?: "bro_split" }.stateIn(viewModelScope, SharingStarted.Eagerly, "bro_split")
     private val selectedDay = MutableStateFlow(LocalDate.now().dayOfWeek.value - 1)
     private val healthStatus = MutableStateFlow("Manual step entry · Health Connect available")
     private val settingsFlow = app.pulseFitPrefs.data.map { p -> Settings(
@@ -133,7 +205,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         definitions.forEach { (id, days) -> dao.insertPlannedExercises(days.flatMapIndexed { day, (focus, names) -> names.mapIndexed { index, name -> PlannedExerciseEntity("$id-$day-$index", id, day, name, 3 + (index % 2), "8–12", 90, if (names.isEmpty()) 0 else 35) } }) }
     }
 
-    fun selectSplit(id: String) { splitId.value = id }
+    fun selectSplit(id: String) { viewModelScope.launch { app.pulseFitPrefs.edit { it[stringPreferencesKey("active_split")] = id } } }
     fun selectDay(day: Int) { selectedDay.value = day }
     fun setHealthStatus(status: String) { healthStatus.value = status }
     fun updateSteps(value: Int) = viewModelScope.launch { dao.putDailyLog(DailyLogEntity(date, value.coerceAtLeast(0))) }
@@ -150,7 +222,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     fun deleteMeal(id: String) = viewModelScope.launch { dao.deleteMeal(id) }
     fun logSet(exercise: PlannedExerciseEntity, weight: Float, reps: Int, rpe: Float, type: String) = viewModelScope.launch {
         val burn = if (type == "Working" || type == "Failure") 35 else 0
-        dao.insertSet(ExerciseSetEntity(date = date, exerciseName = exercise.name, weight = weight, reps = reps, rpe = rpe, type = type, burnCalories = burn))
+        val kind = runCatching { SetType.valueOf(type.uppercase()) }.getOrDefault(SetType.WORKING)
+        dao.insertSet(ExerciseSetEntity(date = date, exerciseName = exercise.name, weight = weight, weightLbs = weight, reps = reps, rpe = rpe, type = type, setType = kind, burnCalories = burn, legacyCompleted = true, isCompleted = true))
     }
     fun addStepSet(id: String, done: Boolean) = viewModelScope.launch { dao.setComplete(id, done) }
 }

@@ -86,16 +86,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
     val state by vm.state.collectAsState()
+    val workoutVm: WorkoutViewModel = viewModel()
+    val workoutState by workoutVm.state.collectAsState()
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var tab by remember { mutableIntStateOf(0) }
     var showProfile by remember { mutableStateOf(false) }
-    var showSetDialog by remember { mutableStateOf<PlannedExerciseEntity?>(null) }
-    var restDuration by remember { mutableIntStateOf(90) }
-    var timerEnd by remember { mutableLongStateOf(0L) }
-    var remainingSeconds by remember { mutableIntStateOf(90) }
     var sensorEnabled by remember { mutableStateOf(false) }
     val sensorPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         sensorEnabled = granted
@@ -106,14 +104,6 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
     val healthLauncher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { grants ->
         if (stepsPermission in grants) { vm.setHealthStatus("Connected · syncing steps"); scope.launch { syncSteps(healthClient, vm, snackbar) } }
         else vm.setHealthStatus("Permission declined · manual entry remains available")
-    }
-    LaunchedEffect(timerEnd) {
-        while (timerEnd > 0L) {
-            val left = ((timerEnd - SystemClock.elapsedRealtime()).coerceAtLeast(0L) / 1000L).toInt()
-            remainingSeconds = left
-            if (left == 0) { timerEnd = 0L; snackbar.showSnackbar("Rest timer complete"); break }
-            delay(250)
-        }
     }
     DisposableEffect(lifecycle, healthClient) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME && healthClient != null) scope.launch {
@@ -139,13 +129,10 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
             }
         }) { pad ->
             Column(Modifier.fillMaxSize().padding(pad)) {
-                TopBar(remainingSeconds, timerEnd > 0L, {
-                    if (timerEnd > 0L) { timerEnd = 0; remainingSeconds = restDuration }
-                    else timerEnd = SystemClock.elapsedRealtime() + remainingSeconds * 1000L
-                }, { restDuration = 90; remainingSeconds = 90; timerEnd = 0 }, { showProfile = true })
+                TopBar(workoutState.remainingSeconds, workoutState.timerTargetElapsedMs > 0L, workoutState.timerMuted, workoutVm::toggleTimer, workoutVm::resetTimer, workoutVm::toggleMute, { showProfile = true })
                 when (tab) {
                     0 -> Dashboard(state, onWorkout = { tab = 1 }, onMeals = { tab = 2 }, onSteps = { tab = 3 }, onProfile = { showProfile = true })
-                    1 -> WorkoutScreen(state, vm, onLog = { showSetDialog = it }, onToast = { scope.launch { snackbar.showSnackbar(it) } })
+                    1 -> WorkoutScreen(workoutVm, onFeedback = { scope.launch { snackbar.showSnackbar(it) } })
                     2 -> MealScreen(state, vm, onToast = { scope.launch { snackbar.showSnackbar(it) } })
                     else -> StepsScreen(state, vm, onConnect = {
                         if (healthClient == null) scope.launch { snackbar.showSnackbar("Health Connect is not available on this device") }
@@ -158,7 +145,6 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
             }
         }
         if (showProfile) ProfileSheet(state.settings, onDismiss = { showProfile = false }, onSave = { vm.saveSettings(it); showProfile = false; scope.launch { snackbar.showSnackbar("Targets saved") } })
-        showSetDialog?.let { exercise -> SetLogger(exercise, onDismiss = { showSetDialog = null }, onSave = { w, r, rpe, type -> vm.logSet(exercise, w, r, rpe, type); showSetDialog = null; scope.launch { snackbar.showSnackbar("Set saved · Epley 1RM ${epley(w, r).toInt()} lb") } }) }
     }
 }
 
@@ -192,7 +178,7 @@ private class StepCounterTracker(context: android.content.Context, private val v
 }
 
 @Composable
-private fun TopBar(seconds: Int, running: Boolean, toggle: () -> Unit, reset: () -> Unit, profile: () -> Unit) {
+private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () -> Unit, reset: () -> Unit, toggleMute: () -> Unit, profile: () -> Unit) {
     Row(Modifier.fillMaxWidth().background(Color(0xFF101827)).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Emerald), Alignment.Center) { Icon(Icons.Default.Favorite, null, tint = Bg) }
@@ -202,6 +188,7 @@ private fun TopBar(seconds: Int, running: Boolean, toggle: () -> Unit, reset: ()
             Text("%02d:%02d".format(seconds / 60, seconds % 60), color = Cyan, fontWeight = FontWeight.Bold)
             TextButton(onClick = toggle, contentPadding = PaddingValues(horizontal = 5.dp)) { Text(if (running) "Pause" else "Start", color = Cyan) }
             IconButton(onClick = reset, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Refresh, "Reset rest timer", tint = Muted, modifier = Modifier.size(18.dp)) }
+            IconButton(onClick = toggleMute, modifier = Modifier.size(28.dp)) { Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, if (muted) "Unmute timer alert" else "Mute timer alert", tint = if (muted) Muted else Emerald, modifier = Modifier.size(18.dp)) }
             IconButton(onClick = profile, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Person, "Profile and targets", tint = Emerald) }
         }
     }
@@ -240,40 +227,6 @@ private fun TopBar(seconds: Int, running: Boolean, toggle: () -> Unit, reset: ()
 @Composable private fun ActionHeading(title: String, action: String, click: () -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text(title, color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp); Text(action, color = Emerald, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.clickable(onClick = click).padding(4.dp)) } }
 @Composable private fun SurfaceCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) { Column(modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Card).padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content) }
 @Composable private fun Progress(value: Float, color: Color) { Box(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape).background(Raised)) { Box(Modifier.fillMaxWidth(value.coerceIn(0f, 1f)).fillMaxHeight().clip(CircleShape).background(color)) } }
-
-@Composable private fun WorkoutScreen(s: PulseFitUiState, vm: DashboardViewModel, onLog: (PlannedExerciseEntity) -> Unit, onToast: (String) -> Unit) {
-    ScrollPage {
-        Column { Text("AI GYM PLANNER", color = Emerald, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp); Text("Build your training week", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
-        s.splits.forEach { split -> FilterChip(selected = split.id == s.selectedSplitId, onClick = { vm.selectSplit(split.id) }, label = { Text(split.name) }, leadingIcon = if (split.id == s.selectedSplitId) ({ Icon(Icons.Default.Check, null) }) else null) }
-        SurfaceCard { Text(s.splits.firstOrNull { it.id == s.selectedSplitId }?.description ?: "Choose a training split", color = Muted, fontSize = 12.sp) }
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN").forEachIndexed { i, label -> FilterChip(selected = i == s.selectedDay, onClick = { vm.selectDay(i) }, label = { Text(label, fontSize = 9.sp) }) } }
-        if (s.exercises.isEmpty()) SurfaceCard { Text("Recovery day · active recovery and a 15,000 step goal.", color = White); Text("Rest timer remains available in the top bar.", color = Muted, fontSize = 12.sp) }
-        s.exercises.forEach { exercise ->
-            val done = s.sets.any { it.exerciseName == exercise.name && it.completed }
-            SurfaceCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(exercise.name, color = White, fontWeight = FontWeight.Bold); Text("${exercise.sets} sets · ${exercise.reps} reps · ${exercise.restSeconds}s rest", color = Muted, fontSize = 10.sp); Text("Logged sets: ${s.sets.count { it.exerciseName == exercise.name }}", color = Cyan, fontSize = 10.sp) }
-                    IconButton(onClick = { onToast("Swap suggestion: ${swapSuggestion(exercise.name)}") }) { Icon(Icons.Default.SwapHoriz, "AI exercise swap", tint = Cyan) }
-                    Button(onClick = { onLog(exercise) }, colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg), contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Log set") }
-                }
-            }
-        }
-        s.sets.filter { it.completed }.takeLast(1).forEach { set -> SurfaceCard { Text("Latest set · ${set.exerciseName}", color = Emerald, fontWeight = FontWeight.Bold); Text("${set.weight} lb × ${set.reps} · RPE ${set.rpe} · ${set.type} · Epley 1RM ${epley(set.weight, set.reps).toInt()} lb", color = Muted, fontSize = 11.sp) } }
-    }
-}
-private fun swapSuggestion(name: String) = when { "squat" in name.lowercase() -> "Leg press or goblet squat"; "press" in name.lowercase() -> "Neutral-grip dumbbell press"; "row" in name.lowercase() -> "Chest-supported machine row"; else -> "Cable or machine variation with a comfortable range" }
-private fun epley(weight: Float, reps: Int) = weight * (1 + reps.coerceAtLeast(1) / 30f)
-
-@Composable private fun SetLogger(exercise: PlannedExerciseEntity, onDismiss: () -> Unit, onSave: (Float, Int, Float, String) -> Unit) {
-    var weight by remember { mutableStateOf("135") }; var reps by remember { mutableStateOf("10") }; var rpe by remember { mutableStateOf("8") }; var type by remember { mutableStateOf("Working") }
-    AlertDialog(onDismissRequest = onDismiss, containerColor = Card, title = { Text("Log ${exercise.name}", color = White) }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField("Weight (lb)", weight, { weight = it }); NumberField("Reps", reps, { reps = it }); NumberField("RPE", rpe, { rpe = it })
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { listOf("Warmup", "Working", "Drop", "Failure").forEach { FilterChip(selected = type == it, onClick = { type = it }, label = { Text(it, fontSize = 9.sp) }) } }
-            Text("Estimated Epley 1RM: ${epley(weight.toFloatOrNull() ?: 0f, reps.toIntOrNull() ?: 1).toInt()} lb", color = Cyan, fontSize = 12.sp)
-        }
-    }, confirmButton = { TextButton(onClick = { onSave(weight.toFloatOrNull() ?: 0f, reps.toIntOrNull() ?: 1, rpe.toFloatOrNull() ?: 8f, type) }) { Text("Save set") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
 
 @Composable private fun NumberField(label: String, value: String, update: (String) -> Unit) { OutlinedTextField(value, update, label = { Text(label) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = White, unfocusedTextColor = White, focusedBorderColor = Emerald, unfocusedBorderColor = Muted, focusedLabelColor = Emerald, unfocusedLabelColor = Muted), modifier = Modifier.fillMaxWidth()) }
 

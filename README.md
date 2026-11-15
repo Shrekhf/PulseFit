@@ -8,10 +8,12 @@ Native Kotlin / Jetpack Compose fitness planner based on the supplied PulseFit A
 - Reactive dashboard calorie equation: target − food + calibrated steps + completed-workout burn
 - Live protein, carbohydrate, and fat progress with an editable TDEE / goal profile
 - Room persistence for daily logs, meals, ingredient rows, five workout splits, planned exercises, and logged sets
+- Room migration from the earlier workout log schema to set-number, enum set-type, exercise-linked logging, and workout-day/exercise entities
 - DataStore persistence for calorie/macro/step goals, calibration mode, and optional Gemini API key
 - Default 5-day Bro Split plus Push/Pull/Legs + Upper, Upper/Lower, Arnold, and Athletic templates
-- Set logging with weight, reps, RPE, set type, and Epley estimated 1RM
-- Monotonic rest timer based on `SystemClock.elapsedRealtime()`
+- Expandable workout cards and set-by-set logging with weight, reps, RPE, Warmup/Working/Drop/Failure set types, haptic completion, Epley estimated 1RM, and live session volume
+- Equipment-filtered biomechanical exercise swap sheet with joint-friendly notes
+- Monotonic, persisted rest timer based on `SystemClock.elapsedRealtime()` with mute, notification beep, and vibration alerts
 - Photo Picker, CameraX capture, ingredient inclusion/multipliers, restaurant customization chips, and live macro totals
 - Optional Gemini multimodal meal estimate when a user supplies a Gemini API key; local text estimates remain available offline
 - Health Connect step reading, optional Android hardware step counter, manual entry, and 500 kcal / 15k calibration with wrist-estimate comparison
