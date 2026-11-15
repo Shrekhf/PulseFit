@@ -65,16 +65,18 @@ object SplitGenerator {
 }
 
 data class ExerciseSession(val exercise: ExerciseEntity, val sets: List<ExerciseSetEntity>)
+data class RecoverySnapshot(val sleepMinutes: Int? = null, val restingHeartRate: Int? = null, val autoRegulationTip: String? = null)
 private data class WorkoutInputs(val splitId: String, val selectedDay: Int, val splits: List<WorkoutSplitEntity>, val sets: List<ExerciseSetEntity>)
 data class WorkoutUiState(
     val splits: List<WorkoutSplitEntity> = emptyList(), val selectedSplitId: String = "bro_split", val selectedDay: Int = LocalDate.now().dayOfWeek.value - 1,
     val days: List<WorkoutDayEntity> = emptyList(), val day: WorkoutDayEntity? = null, val exercises: List<ExerciseSession> = emptyList(),
-    val remainingSeconds: Int = 90, val timerTargetElapsedMs: Long = 0L, val timerMuted: Boolean = false, val equipment: String = "Full Commercial Gym", val totalVolume: Long = 0L
+    val remainingSeconds: Int = 90, val timerTargetElapsedMs: Long = 0L, val timerMuted: Boolean = false, val equipment: String = "Full Commercial Gym", val totalVolume: Long = 0L, val healthSyncStatus: String? = null
 )
 
 class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = PulseFitDatabase.get(app).dao()
     private val prefs = app.pulseFitPrefs
+    private val healthSyncBridge = HealthSyncBridge(app)
     private val today = LocalDate.now().toString()
     private val splitId = prefs.data.map { it[stringPreferencesKey("active_split")] ?: "bro_split" }.stateIn(viewModelScope, SharingStarted.Eagerly, "bro_split")
     private val selectedDay = MutableStateFlow(LocalDate.now().dayOfWeek.value - 1)
@@ -83,6 +85,10 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private val timerMuted = prefs.data.map { it[booleanPreferencesKey("workout_timer_muted")] ?: false }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private val now = MutableStateFlow(SystemClock.elapsedRealtime())
     private var pausedSeconds = 90
+    private var activeWorkoutStartMs: Long? = null
+    private var lastAutoSyncKey: String? = null
+    private val _healthSyncStatus = MutableStateFlow<String?>(null)
+    val recoverySnapshot: StateFlow<RecoverySnapshot?> = MutableStateFlow(null)
 
     private val workoutContent: Flow<WorkoutUiState> = combine(splitId, selectedDay, dao.splits(), dao.exerciseSets(today)) { id, dayIndex, splits, sets -> WorkoutInputs(id, dayIndex, splits, sets) }
         .flatMapLatest { input ->
@@ -98,7 +104,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         }
     val state: StateFlow<WorkoutUiState> = combine(workoutContent, timerTarget, timerMuted, equipment, now) { content, target, muted, gear, time ->
         content.copy(timerTargetElapsedMs = target, remainingSeconds = if (target > time) ((target - time + 999) / 1000).toInt() else if (target == 0L) pausedSeconds else 90, timerMuted = muted, equipment = gear)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WorkoutUiState())
+    }.combine(_healthSyncStatus) { content, syncStatus -> content.copy(healthSyncStatus = syncStatus) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WorkoutUiState())
 
     init {
         viewModelScope.launch { seed(); val p = prefs.data.first(); timerTarget.value = p[longPreferencesKey("workout_timer_target")] ?: 0L }
@@ -113,6 +120,12 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch { prefs.data.collectLatest { data -> val value = data[longPreferencesKey("workout_timer_target")] ?: 0L; if (value != timerTarget.value) timerTarget.value = value } }
         viewModelScope.launch { state.map { it.exercises }.distinctUntilChanged().collectLatest { rows -> ensureSets(rows) } }
+        viewModelScope.launch {
+            state.map { snapshot -> snapshot.day?.id to snapshot.exercises.flatMap { it.sets }.filter { it.setType == SetType.WORKING }.let { sets -> sets.isNotEmpty() && sets.all { it.isCompleted } } }
+                .distinctUntilChanged().collectLatest { (dayId, allDone) ->
+                    if (dayId != null && allDone && lastAutoSyncKey != dayId) finishAndSyncWorkout(dayId)
+                }
+        }
     }
 
     private suspend fun seed() {
@@ -145,8 +158,20 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         updateSet(set.copy(setType = next))
     }
     fun completeSet(set: ExerciseSetEntity, completed: Boolean, restSeconds: Int) {
+        if (completed && activeWorkoutStartMs == null) activeWorkoutStartMs = System.currentTimeMillis()
         updateSet(set.copy(isCompleted = completed, burnCalories = if (completed) 12 else 0))
         if (completed) startTimer(restSeconds)
+    }
+    fun finishAndSyncWorkout(dayId: String? = state.value.day?.id) = viewModelScope.launch {
+        val current = state.value
+        val day = current.day ?: return@launch
+        if (dayId == null || lastAutoSyncKey == dayId) return@launch
+        lastAutoSyncKey = dayId
+        val endMs = System.currentTimeMillis()
+        val duration = activeWorkoutStartMs?.let { ((endMs - it).coerceAtLeast(60_000L) / 60_000L).toInt() } ?: (current.exercises.sumOf { it.exercise.plannedSets } * 3).coerceAtLeast(1)
+        val calories = current.exercises.flatMap { it.sets }.filter { it.isCompleted }.sumOf { it.burnCalories }.takeIf { it > 0 } ?: day.estimatedBurnCalories
+        val synced = healthSyncBridge.writeWorkoutToSamsungHealth(day.focus, duration, calories)
+        _healthSyncStatus.value = if (synced) "Synced to Room + Samsung Health" else "Workout saved · Health Connect sync unavailable or not permitted"
     }
     fun swapExercise(current: ExerciseEntity, replacement: String) = viewModelScope.launch {
         dao.updateExerciseEntity(current.copy(name = replacement))

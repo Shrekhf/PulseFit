@@ -10,6 +10,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
@@ -24,6 +25,15 @@ import java.util.UUID
 import kotlinx.coroutines.delay
 
 val Application.pulseFitPrefs by preferencesDataStore("pulsefit_settings")
+
+val PREFER_SAMSUNG_HEALTH_ORIGIN = booleanPreferencesKey("prefer_samsung_health_origin")
+val AUTO_WRITE_TO_SAMSUNG_HEALTH = booleanPreferencesKey("auto_write_to_samsung_health")
+
+class UserPreferencesRepository(private val context: Context) {
+    private val store = (context.applicationContext as Application).pulseFitPrefs
+    val preferSamsungHealthOrigin: Flow<Boolean> = store.data.map { it[PREFER_SAMSUNG_HEALTH_ORIGIN] ?: true }
+    val autoWriteToSamsungHealth: Flow<Boolean> = store.data.map { it[AUTO_WRITE_TO_SAMSUNG_HEALTH] ?: true }
+}
 
 @Entity(tableName = "daily_logs")
 data class DailyLogEntity(@PrimaryKey val date: String, val steps: Int = 0)

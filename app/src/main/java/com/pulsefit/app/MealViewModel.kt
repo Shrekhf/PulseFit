@@ -15,10 +15,11 @@ data class IngredientDraft(
     val included: Boolean = true, val multiplier: Float = 1f, val portion: String = "1 serving"
 )
 data class MealAnalysis(val mealTitle: String, val confidence: Int, val ingredients: List<IngredientDraft>)
-data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0)
+data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null)
 
 class MealViewModel(application: Application) : AndroidViewModel(application) {
     private val dao = PulseFitDatabase.get(application).dao()
+    private val healthSyncBridge = HealthSyncBridge(application)
     private val _state = MutableStateFlow(MealScannerState(ingredients = parseMealOffline("chicken bowl with greens, rice, beans and sauce")))
     val state: StateFlow<MealScannerState> = _state.asStateFlow()
 
@@ -38,14 +39,17 @@ class MealViewModel(application: Application) : AndroidViewModel(application) {
         }
         copy(ingredients = list, savings = when(label) { "Remove Pita" -> 240; "Sub Greens for Rice" -> 185; "No Heavy Sauce" -> 120; else -> 0 })
     }
-    fun logMeal(slot: String, onDone: () -> Unit) = viewModelScope.launch {
+    fun logMeal(slot: String, onDone: (String) -> Unit) = viewModelScope.launch {
         val s = _state.value
         val rows = s.ingredients.filter { it.included }
         val total = IngredientTotals(rows.sumOf { (it.kcal * it.multiplier).toInt() }, rows.sumOf { (it.p * it.multiplier).toInt() }, rows.sumOf { (it.c * it.multiplier).toInt() }, rows.sumOf { (it.f * it.multiplier).toInt() })
         val meal = MealEntity(date = LocalDate.now().toString(), slot = slot, name = s.title, kcal = total.kcal, protein = total.protein, carbs = total.carbs, fat = total.fat)
         dao.insertMeal(meal)
         dao.insertIngredients(s.ingredients.map { IngredientItem(mealId = meal.id, name = it.name, baseKcal = it.kcal, baseProtein = it.p, baseCarbs = it.c, baseFat = it.f, multiplier = it.multiplier, included = it.included) })
-        onDone()
+        val synced = runCatching { healthSyncBridge.writeMealToSamsungHealth(s.title, slot, total.kcal, total.protein, total.carbs, total.fat) }.getOrDefault(false)
+        val status = if (synced) "Synced to Room + Samsung Health" else "Saved to Room · Health Connect sync unavailable or not permitted"
+        _state.value = _state.value.copy(syncStatus = status)
+        onDone(status)
     }
     private inline fun mutate(block: MealScannerState.() -> MealScannerState) { _state.value = _state.value.block() }
 }

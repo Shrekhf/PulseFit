@@ -121,7 +121,8 @@ private val MealWhite = Color(0xFFF8FAFC)
                 }
                 Text("${total.protein}g protein · ${total.carbs}g carbs · ${total.fat}g fat", color = MealCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { listOf("Breakfast", "Lunch", "Dinner", "Snack").forEach { FilterChip(slot == it, { slot = it }, label = { Text(it, fontSize = 9.sp) }) } }
-                Button(onClick = { vm.logMeal(slot) { onToast("$title logged · ${total.kcal} kcal") } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) { Text("Log meal · ${total.kcal} kcal") }
+                Button(onClick = { vm.logMeal(slot) { status -> onToast("$title logged · ${total.kcal} kcal · $status") } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) { Text("Log meal · ${total.kcal} kcal") }
+                state.syncStatus?.let { Text(it, color = if (it.startsWith("Synced")) MealGreen else MealMuted, fontSize = 10.sp) }
             }
         }
         Text("TODAY'S MEALS", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)

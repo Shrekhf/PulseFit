@@ -43,12 +43,15 @@ private val WorkoutWhite = Color(0xFFF8FAFC)
 @Composable
 fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Unit = {}) {
     val state by vm.state.collectAsState()
+    val recovery by vm.recoverySnapshot.collectAsState()
     var splitMenu by remember { mutableStateOf(false) }
     var expandedExercise by remember { mutableStateOf<String?>(null) }
     var swapTarget by remember { mutableStateOf<ExerciseEntity?>(null) }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(state.healthSyncStatus) { state.healthSyncStatus?.let(onFeedback) }
 
     LazyColumn(Modifier.fillMaxSize().background(WorkoutBg), contentPadding = PaddingValues(bottom = 22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { SamsungHealthRecoveryBanner(recovery) }
         item {
             Column(Modifier.padding(horizontal = 16.dp).padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("AI GYM PLANNER", color = WorkoutGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
@@ -80,6 +83,12 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
                 Text(state.day?.focus ?: "Loading training day…", color = WorkoutWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(state.day?.notes ?: "Workout data is loading from your local database.", color = WorkoutMuted, fontSize = 11.sp)
                 Text("Session volume  ${"%,d".format(state.totalVolume)} lb  ·  Workout burn ${state.day?.estimatedBurnCalories ?: 0} kcal", color = WorkoutCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                if (state.exercises.isNotEmpty()) {
+                    Button(onClick = { vm.finishAndSyncWorkout() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = WorkoutGreen, contentColor = WorkoutBg)) {
+                        Text("Finish & Sync Workout to Samsung Health", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    state.healthSyncStatus?.let { Text(it, color = if (it.startsWith("Synced")) WorkoutGreen else WorkoutMuted, fontSize = 9.sp) }
+                }
             }
         }
         if (state.exercises.isEmpty()) item {
@@ -96,6 +105,22 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
         SwapSheet(target, state.equipment, onEquipment = vm::chooseEquipment, onDismiss = { swapTarget = null }, onSwap = { alternative ->
             vm.swapExercise(target, alternative.name); swapTarget = null; onFeedback("Exercise changed to ${alternative.name}")
         })
+    }
+}
+
+@Composable private fun SamsungHealthRecoveryBanner(snapshot: RecoverySnapshot?) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().background(WorkoutCard, RoundedCornerShape(14.dp)).clickable { expanded = !expanded }.padding(11.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("SAMSUNG HEALTH RECOVERY", color = WorkoutCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.7.sp)
+                Text(if (snapshot == null) "Recovery insights will appear here" else "${snapshot.sleepMinutes?.let { "${it / 60}h ${it % 60}m sleep" } ?: "Sleep unavailable"} · ${snapshot.restingHeartRate?.let { "$it bpm resting HR" } ?: "Resting HR unavailable"}", color = WorkoutWhite, fontSize = 11.sp)
+            }
+            Text(if (expanded) "⌃" else "⌄", color = WorkoutMuted)
+        }
+        AnimatedVisibility(expanded) {
+            Text(snapshot?.autoRegulationTip ?: "Sleep, resting heart rate, and AI RPE guidance will populate when recovery sync is connected.", color = WorkoutMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 7.dp))
+        }
     }
 }
 
