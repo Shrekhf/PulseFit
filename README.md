@@ -1,31 +1,33 @@
 # PulseFit AI for Android
 
-An Android starter app based on the provided PulseFit AI HTML prototype. The UI is built with Kotlin and Jetpack Compose and adapts the prototype into a mobile layout with bottom navigation.
+Native Kotlin / Jetpack Compose fitness planner based on the supplied PulseFit AI prototype.
 
-## Included
+## App features
 
-- Dashboard with calorie budget, meal diary, workout summary, and step progress
-- Weekly workout split with exercise completion toggles
-- Rest timer in the top bar
-- Meal description form with a local heuristic nutrition estimate and diary logging
-- Editable step count with quick-add buttons; step count is saved locally
-- Health Connect read permission for today's step totals, with a manual fallback
-- Dark theme with the prototype's emerald and cyan accents
+- Material 3 dark UI, four-tab navigation, and Snackbar feedback
+- Reactive dashboard calorie equation: target − food + calibrated steps + completed-workout burn
+- Live protein, carbohydrate, and fat progress with an editable TDEE / goal profile
+- Room persistence for daily logs, meals, ingredient rows, five workout splits, planned exercises, and logged sets
+- DataStore persistence for calorie/macro/step goals, calibration mode, and optional Gemini API key
+- Default 5-day Bro Split plus Push/Pull/Legs + Upper, Upper/Lower, Arnold, and Athletic templates
+- Set logging with weight, reps, RPE, set type, and Epley estimated 1RM
+- Monotonic rest timer based on `SystemClock.elapsedRealtime()`
+- Photo Picker, CameraX capture, ingredient inclusion/multipliers, restaurant customization chips, and live macro totals
+- Optional Gemini multimodal meal estimate when a user supplies a Gemini API key; local text estimates remain available offline
+- Health Connect step reading, optional Android hardware step counter, manual entry, and 500 kcal / 15k calibration with wrist-estimate comparison
 
 ## Build
 
-Open this folder in Android Studio and install Android SDK Platform 36 and Build Tools 36.0.0 if prompted. Then run the `app` configuration, or from this directory run:
+Install Android SDK Platform 36 and Build Tools 36.0.0, then run from this directory:
 
 ```powershell
-.
-gradlew.bat assembleDebug
+.\gradlew.bat assembleDebug
 ```
 
-The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
-GitHub Actions also builds this APK on pushes and manual workflow runs. Download `pulsefit-debug-apk` from the workflow run's Artifacts section.
+The APK is generated at `app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions builds the same APK on pushes and manual workflow runs; download `pulsefit-debug-apk` from the run's Artifacts section.
 
-For Health Connect, install or update the Health Connect app on the phone, grant PulseFit the Steps read permission from the Steps screen, and allow the connection in Health Connect. The app aggregates today's records on device resume.
+## AI and privacy
 
-## Notes
+The app runs without an account or network connection for logging, workouts, manual steps, and local estimates. Gemini analysis is opt-in: add a key in Profile, then tap Analyze. That action sends the entered description and selected image to Google's Gemini API. The key is stored locally in DataStore. Meal photos are not uploaded until analysis is requested. Nutrition estimates are approximate and should be reviewed.
 
-Meal estimates are local keyword-based estimates, not AI predictions. Photo-based meal analysis requires an image model/service. Step counts can be entered manually if Health Connect is unavailable or permission is declined.
+Health Connect step access requires the user to grant Steps read permission. If it is unavailable, the phone's hardware step counter or manual step adjustment can be used. The phone sensor is active while the app is in the foreground.
