@@ -17,7 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import com.google.ai.client.generativeai.GenerativeModel
+import org.json.JSONObject
 
 data class ExerciseSeed(val name: String, val sets: Int = 4, val reps: String = "8–12", val rest: Int = 90, val equipment: String = "Full Commercial Gym", val jointNote: String = "Use a smooth, pain-free range of motion.")
 data class DaySeed(val focus: String, val notes: String, val burn: Int, val exercises: List<ExerciseSeed>)
@@ -164,19 +164,24 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseEquipment(value: String) { equipment.value = value }
     fun requestAiCoach() = viewModelScope.launch {
         _coachLoading.value = true
-        val current = state.value
-        val recovery = _recoverySnapshot.value
-        val key = prefs.data.first()[stringPreferencesKey("gemini_key")].orEmpty()
-        val offline = when {
-            (recovery?.sleepMinutes ?: 480) < 390 -> "Sleep was under 6.5 hours. Keep 2–3 reps in reserve, lower today's RPE target by 0.5, and avoid grinding reps."
-            else -> "Follow today's plan with controlled reps. Keep 1–3 reps in reserve and stop any movement that causes joint pain."
+        try {
+            val current = state.value
+            val recovery = _recoverySnapshot.value
+            val saved = prefs.data.first()
+            val key = saved[stringPreferencesKey("gemini_key")].orEmpty().trim()
+            val model = saved[stringPreferencesKey("gemini_model")] ?: GeminiApiClient.DEFAULT_MODEL
+            val offline = when {
+                (recovery?.sleepMinutes ?: 480) < 390 -> "Sleep was under 6.5 hours. Keep 2–3 reps in reserve, lower today's RPE target by 0.5, and avoid grinding reps."
+                else -> "Follow today's plan with controlled reps. Keep 1–3 reps in reserve and stop any movement that causes joint pain."
+            }
+            _coachNote.value = if (key.isBlank()) offline else runCatching {
+                val prompt = "Return only JSON with a coachNote string. Give concise, safety-minded coaching for ${current.day?.focus ?: "today's training"}. Planned exercises: ${current.exercises.joinToString { it.exercise.name }}. Session volume so far: ${current.totalVolume} lb. Sleep: ${recovery?.sleepMinutes ?: "unknown"} minutes; average/resting heart rate: ${recovery?.restingHeartRate ?: "unknown"} bpm. Avoid medical claims."
+                val response = GeminiApiClient(getApplication()).generateContent(key, model, prompt)
+                JSONObject(response.text).optString("coachNote").ifBlank { error("Gemini returned no coach note") }
+            }.getOrElse { "$offline · Gemini unavailable: ${it.message ?: it.javaClass.simpleName}" }
+        } finally {
+            _coachLoading.value = false
         }
-        _coachNote.value = if (key.isBlank()) offline else runCatching {
-            GenerativeModel(modelName = "gemini-2.5-flash", apiKey = key).generateContent(
-                "Give concise, safety-minded coaching for ${current.day?.focus ?: "today's training"}. Planned exercises: ${current.exercises.joinToString { it.exercise.name }}. Session volume so far: ${current.totalVolume} lb. Sleep: ${recovery?.sleepMinutes ?: "unknown"} minutes; average/resting heart rate: ${recovery?.restingHeartRate ?: "unknown"} bpm. Return a short actionable note; avoid medical claims."
-            ).text?.takeIf { it.isNotBlank() } ?: offline
-        }.getOrDefault(offline)
-        _coachLoading.value = false
     }
     fun updateSet(set: ExerciseSetEntity) = viewModelScope.launch { dao.updateSet(set.copy(weight = set.weightLbs, type = set.setType.name.lowercase().replaceFirstChar(Char::uppercase), legacyCompleted = set.isCompleted)) }
     fun cycleSetType(set: ExerciseSetEntity) {

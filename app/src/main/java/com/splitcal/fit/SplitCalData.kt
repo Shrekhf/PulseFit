@@ -176,7 +176,7 @@ abstract class SplitCalDatabase : RoomDatabase() {
     }
 }
 
-data class Settings(val calorieTarget: Int = 2150, val proteinTarget: Int = 185, val carbTarget: Int = 200, val fatTarget: Int = 65, val stepGoal: Int = 15000, val calibrationMode: String = "personal_500", val geminiKey: String = "", val wearableActiveCalories: Int? = null, val preferSamsungOrigin: Boolean = true, val autoWriteSamsung: Boolean = true)
+data class Settings(val calorieTarget: Int = 2150, val proteinTarget: Int = 185, val carbTarget: Int = 200, val fatTarget: Int = 65, val stepGoal: Int = 15000, val calibrationMode: String = "personal_500", val geminiKey: String = "", val wearableActiveCalories: Int? = null, val preferSamsungOrigin: Boolean = true, val autoWriteSamsung: Boolean = true, val geminiModel: String = GeminiApiClient.DEFAULT_MODEL)
 
 data class DailyChartPoint(val date: String, val intake: Int, val burn: Int)
 
@@ -212,7 +212,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         geminiKey = p[stringPreferencesKey("gemini_key")] ?: "",
         wearableActiveCalories = p[intPreferencesKey("wearable_active_calories")],
         preferSamsungOrigin = p[PREFER_SAMSUNG_HEALTH_ORIGIN] ?: true,
-        autoWriteSamsung = p[AUTO_WRITE_TO_SAMSUNG_HEALTH] ?: true
+        autoWriteSamsung = p[AUTO_WRITE_TO_SAMSUNG_HEALTH] ?: true,
+        geminiModel = p[stringPreferencesKey("gemini_model")] ?: GeminiApiClient.DEFAULT_MODEL
     ) }
     val state: StateFlow<SplitCalUiState> = date.flatMapLatest { selected -> combine(
         dao.dailyLog(selected.toString()), dao.meals(selected.toString()), dao.exerciseSets(selected.toString()), dao.splits(), settingsFlow, splitId, selectedDay, healthStatus,
@@ -282,6 +283,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         p[intPreferencesKey("carbs")] = settings.carbTarget; p[intPreferencesKey("fat")] = settings.fatTarget
         p[intPreferencesKey("step_goal")] = settings.stepGoal; p[stringPreferencesKey("calibration")] = settings.calibrationMode
         p[stringPreferencesKey("gemini_key")] = settings.geminiKey
+        p[stringPreferencesKey("gemini_model")] = settings.geminiModel.ifBlank { GeminiApiClient.DEFAULT_MODEL }
         p[PREFER_SAMSUNG_HEALTH_ORIGIN] = settings.preferSamsungOrigin
         p[AUTO_WRITE_TO_SAMSUNG_HEALTH] = settings.autoWriteSamsung
     } }

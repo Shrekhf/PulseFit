@@ -15,7 +15,7 @@ Native Kotlin / Jetpack Compose fitness planner based on the supplied SplitCal p
 - Equipment-filtered biomechanical exercise swap sheet with joint-friendly notes
 - Monotonic, persisted rest timer based on `SystemClock.elapsedRealtime()` with mute, notification beep, and vibration alerts
 - Photo Picker, CameraX capture, ingredient inclusion/multipliers, restaurant customization chips, and live macro totals
-- Optional Gemini multimodal meal estimate when a user supplies a Gemini API key; local text estimates remain available offline
+- Optional Gemini multimodal meal analysis and AI workout coaching through a direct REST client, with model selection, model discovery, 404 fallbacks, and offline guidance
 - Health Connect step reading, optional Android hardware step counter, manual entry, and 500 kcal / 15k calibration with wrist-estimate comparison
 
 ## Build
@@ -30,7 +30,7 @@ The APK is generated at `app/build/outputs/apk/debug/app-debug.apk`. GitHub Acti
 
 ## AI and privacy
 
-The app runs without an account or network connection for logging, workouts, manual steps, and local estimates. Gemini analysis is opt-in: add a key in Profile, then tap Analyze. That action sends the entered description and selected image to Google's Gemini API. The key is stored locally in DataStore. Meal photos are not uploaded until analysis is requested. Nutrition estimates are approximate and should be reviewed.
+The app runs without an account or network connection for logging, workouts, manual steps, and local estimates. Gemini analysis is opt-in: add a key and choose or test a model in Settings, then tap Analyze or request an AI workout coach note. Those actions send the prompt and, for meal analysis, selected image to Google's Gemini API. The key and model choice are stored locally in DataStore. Meal photos are not uploaded until analysis is requested. Nutrition estimates are approximate and should be reviewed.
 
 Health Connect step access requires the user to grant Steps read permission. If it is unavailable, the phone's hardware step counter or manual step adjustment can be used. The phone sensor is active while the app is in the foreground.
 

@@ -313,7 +313,9 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun ProfileSheet(settings: Settings, onDismiss: () -> Unit, onSave: (Settings) -> Unit, onExport: () -> Unit, onImport: () -> Unit) {
     var calories by remember(settings) { mutableStateOf(settings.calorieTarget.toString()) }; var protein by remember(settings) { mutableStateOf(settings.proteinTarget.toString()) }; var carbs by remember(settings) { mutableStateOf(settings.carbTarget.toString()) }; var fat by remember(settings) { mutableStateOf(settings.fatTarget.toString()) }
-    var age by remember { mutableStateOf("30") }; var height by remember { mutableStateOf("175") }; var weight by remember { mutableStateOf("75") }; var sex by remember { mutableStateOf("Male") }; var activity by remember { mutableStateOf(1.45f) }; var goal by remember { mutableStateOf("Maintenance") }; var key by remember(settings) { mutableStateOf(settings.geminiKey) }; var preferSamsung by remember(settings) { mutableStateOf(settings.preferSamsungOrigin) }; var autoWrite by remember(settings) { mutableStateOf(settings.autoWriteSamsung) }; var revealKey by remember { mutableStateOf(false) }
+    var age by remember { mutableStateOf("30") }; var height by remember { mutableStateOf("175") }; var weight by remember { mutableStateOf("75") }; var sex by remember { mutableStateOf("Male") }; var activity by remember { mutableStateOf(1.45f) }; var goal by remember { mutableStateOf("Maintenance") }; var key by remember(settings) { mutableStateOf(settings.geminiKey) }; var geminiModel by remember(settings) { mutableStateOf(settings.geminiModel) }; var preferSamsung by remember(settings) { mutableStateOf(settings.preferSamsungOrigin) }; var autoWrite by remember(settings) { mutableStateOf(settings.autoWriteSamsung) }; var revealKey by remember { mutableStateOf(false) }; var testingKey by remember { mutableStateOf(false) }; var keyTestStatus by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val tdee = remember(age, height, weight, sex, activity) { val w = weight.toFloatOrNull() ?: 75f; val h = height.toFloatOrNull() ?: 175f; val a = age.toIntOrNull() ?: 30; ((10*w + 6.25f*h - 5*a + if (sex == "Male") 5 else -161) * activity).toInt() }
     val recommended = when (goal) { "Cut" -> tdee - 350; "Lean Bulk" -> tdee + 200; "Recomp" -> tdee - 100; else -> tdee }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Card) {
@@ -327,13 +329,35 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
             item { NumberField("Daily calorie target", calories, { calories = it }) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { NumberField("Protein g", protein, { protein = it }); NumberField("Carbs g", carbs, { carbs = it }); NumberField("Fat g", fat, { fat = it }) } }
             item { OutlinedTextField(key, { key = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Gemini API key (optional)") }, visualTransformation = if (revealKey) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(), trailingIcon = { TextButton(onClick = { revealKey = !revealKey }) { Text(if (revealKey) "Hide" else "Show") } }) }
-            item { Text("Gemini 2.5 Flash is called only when you analyze a meal or request a workout coach note. Your key is stored locally in DataStore; prompts and selected meal photos are sent to Google for those requests.", color = Muted, fontSize = 10.sp) }
+            item { Text("Gemini model", color = Cyan, fontWeight = FontWeight.Bold) }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    items(GeminiApiClient.MODEL_OPTIONS) { model ->
+                        FilterChip(selected = geminiModel == model, onClick = { geminiModel = model; keyTestStatus = null }, label = { Text(model, fontSize = 9.sp) })
+                    }
+                }
+            }
+            item { OutlinedTextField(geminiModel, { geminiModel = it.trim(); keyTestStatus = null }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Model ID (choose above or enter custom)") }) }
+            item {
+                OutlinedButton(enabled = !testingKey, onClick = {
+                    scope.launch {
+                        testingKey = true
+                        keyTestStatus = null
+                        runCatching { GeminiApiClient(context).testAndDiscoverModel(key, geminiModel) }
+                            .onSuccess { active -> geminiModel = active; keyTestStatus = "API key works · active model: $active" }
+                            .onFailure { error -> keyTestStatus = "Test failed · ${error.message ?: error.javaClass.simpleName}" }
+                        testingKey = false
+                    }
+                }, modifier = Modifier.fillMaxWidth()) { Text(if (testingKey) "Checking API key…" else "Test & Auto-Detect Model") }
+            }
+            keyTestStatus?.let { status -> item { Text(status, color = if (status.startsWith("API key works")) Emerald else Color(0xFFFDA4AF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold) } }
+            item { Text("Gemini uses model discovery and REST fallbacks. Your key is stored locally in DataStore; prompts and selected meal photos are sent to Google when you run an AI request.", color = Muted, fontSize = 10.sp) }
             item { SettingSwitch("Prefer Samsung Health data origin", "com.sec.android.app.shealth records first", preferSamsung) { preferSamsung = it } }
             item { SettingSwitch("Auto-write meals & workouts", "Send logged nutrition and finished workouts to Health Connect", autoWrite) { autoWrite = it } }
             item { Text("JSON backup", color = Cyan, fontWeight = FontWeight.Bold) }
             item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = onExport, modifier = Modifier.weight(1f)) { Text("Export all data") }; OutlinedButton(onClick = onImport, modifier = Modifier.weight(1f)) { Text("Restore backup") } } }
             item { Text("Restore replaces the app's Room data. Settings and API key remain on this device.", color = Muted, fontSize = 10.sp) }
-            item { Button(onClick = { onSave(settings.copy(calorieTarget = calories.toIntOrNull() ?: settings.calorieTarget, proteinTarget = protein.toIntOrNull() ?: settings.proteinTarget, carbTarget = carbs.toIntOrNull() ?: settings.carbTarget, fatTarget = fat.toIntOrNull() ?: settings.fatTarget, geminiKey = key.trim(), preferSamsungOrigin = preferSamsung, autoWriteSamsung = autoWrite)) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg)) { Text("Save settings & targets") } }
+            item { Button(onClick = { onSave(settings.copy(calorieTarget = calories.toIntOrNull() ?: settings.calorieTarget, proteinTarget = protein.toIntOrNull() ?: settings.proteinTarget, carbTarget = carbs.toIntOrNull() ?: settings.carbTarget, fatTarget = fat.toIntOrNull() ?: settings.fatTarget, geminiKey = key.trim(), geminiModel = geminiModel.trim().ifBlank { GeminiApiClient.DEFAULT_MODEL }, preferSamsungOrigin = preferSamsung, autoWriteSamsung = autoWrite)) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg)) { Text("Save settings & targets") } }
         }
     }
 }

@@ -15,7 +15,7 @@ data class IngredientDraft(
     val name: String, val kcal: Int, val p: Int, val c: Int, val f: Int,
     val included: Boolean = true, val multiplier: Float = 1f, val portion: String = "1 serving"
 )
-data class MealAnalysis(val mealTitle: String, val confidence: Int, val ingredients: List<IngredientDraft>, val usedGemini: Boolean = false, val fallbackReason: String? = null)
+data class MealAnalysis(val mealTitle: String, val confidence: Int, val ingredients: List<IngredientDraft>, val usedGemini: Boolean = false, val fallbackReason: String? = null, val activeModel: String? = null)
 data class MealScannerState(val title: String = "My meal", val confidence: Int = 0, val ingredients: List<IngredientDraft> = emptyList(), val analyzing: Boolean = false, val error: String? = null, val savings: Int = 0, val syncStatus: String? = null, val editingMealId: String? = null, val editingSlot: String? = null, val analysisStatus: String? = null)
 
 class MealViewModel(application: Application) : AndroidViewModel(application) {
@@ -38,10 +38,12 @@ class MealViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun deleteMeal(id: String) = viewModelScope.launch { dao.deleteMeal(id) }
     fun setAnalyzing(value: Boolean) = mutate { copy(analyzing = value, error = null) }
-    fun setAnalysis(analysis: MealAnalysis) { _state.value = MealScannerState(analysis.mealTitle, analysis.confidence, analysis.ingredients, analysisStatus = if (analysis.usedGemini) "Analyzed with Gemini 2.5 Flash" else "Offline estimate · ${analysis.fallbackReason ?: "Gemini unavailable"}") }
+    fun setAnalysis(analysis: MealAnalysis) { _state.value = MealScannerState(analysis.mealTitle, analysis.confidence, analysis.ingredients, analysisStatus = if (analysis.usedGemini) "Analyzed with ${analysis.activeModel ?: "Gemini"}" else "Offline estimate · ${analysis.fallbackReason ?: "Gemini unavailable"}") }
     suspend fun analyzeMeal(context: android.content.Context, prompt: String, bitmap: android.graphics.Bitmap?): MealAnalysis {
-        val apiKey = preferences.data.first()[androidx.datastore.preferences.core.stringPreferencesKey("gemini_key")].orEmpty().trim()
-        val analysis = AiMealAnalyzer().analyze(context, apiKey, prompt, bitmap)
+        val saved = preferences.data.first()
+        val apiKey = saved[androidx.datastore.preferences.core.stringPreferencesKey("gemini_key")].orEmpty().trim()
+        val selectedModel = saved[androidx.datastore.preferences.core.stringPreferencesKey("gemini_model")] ?: GeminiApiClient.DEFAULT_MODEL
+        val analysis = AiMealAnalyzer().analyze(context, apiKey, prompt, bitmap, selectedModel = selectedModel)
         setAnalysis(analysis)
         return analysis
     }

@@ -86,7 +86,7 @@ private val MealWhite = Color(0xFFF8FAFC)
                     runCatching { vm.analyzeMeal(context, prompt, bitmap) }
                         .onSuccess { result ->
                             title = result.mealTitle
-                            onToast(if (result.usedGemini) "Gemini 2.5 Flash analysis complete" else result.fallbackReason ?: "Offline estimate ready")
+                            onToast(if (result.usedGemini) "Gemini analysis complete · ${result.activeModel ?: "active model"}" else result.fallbackReason ?: "Offline estimate ready")
                         }
                         .onFailure { error -> vm.fail(error.message ?: "Meal analysis failed"); onToast("Meal analysis failed: ${error.message ?: "unknown error"}") }
                 } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) {
