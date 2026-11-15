@@ -87,6 +87,7 @@ class MainActivity : ComponentActivity() {
 private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     val workoutVm: WorkoutViewModel = viewModel()
+    val mealVm: MealViewModel = viewModel()
     val workoutState by workoutVm.state.collectAsState()
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current
@@ -133,7 +134,7 @@ private fun PulseFitApp(vm: DashboardViewModel = viewModel()) {
                 when (tab) {
                     0 -> Dashboard(state, onWorkout = { tab = 1 }, onMeals = { tab = 2 }, onSteps = { tab = 3 }, onProfile = { showProfile = true })
                     1 -> WorkoutScreen(workoutVm, onFeedback = { scope.launch { snackbar.showSnackbar(it) } })
-                    2 -> MealScreen(state, vm, onToast = { scope.launch { snackbar.showSnackbar(it) } })
+                    2 -> MealScannerScreen(state, mealVm, onToast = { scope.launch { snackbar.showSnackbar(it) } })
                     else -> StepsScreen(state, vm, onConnect = {
                         if (healthClient == null) scope.launch { snackbar.showSnackbar("Health Connect is not available on this device") }
                         else healthLauncher.launch(setOf(stepsPermission))
@@ -229,153 +230,6 @@ private fun TopBar(seconds: Int, running: Boolean, muted: Boolean, toggle: () ->
 @Composable private fun Progress(value: Float, color: Color) { Box(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape).background(Raised)) { Box(Modifier.fillMaxWidth(value.coerceIn(0f, 1f)).fillMaxHeight().clip(CircleShape).background(color)) } }
 
 @Composable private fun NumberField(label: String, value: String, update: (String) -> Unit) { OutlinedTextField(value, update, label = { Text(label) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = White, unfocusedTextColor = White, focusedBorderColor = Emerald, unfocusedBorderColor = Muted, focusedLabelColor = Emerald, unfocusedLabelColor = Muted), modifier = Modifier.fillMaxWidth()) }
-
-private data class IngredientDraft(val name: String, val kcal: Int, val p: Int, val c: Int, val f: Int, val included: Boolean = true, val multiplier: Float = 1f)
-private fun parseIngredients(text: String): List<IngredientDraft> {
-    val t = text.lowercase(); val result = mutableListOf<IngredientDraft>()
-    if ("chicken" in t) result += IngredientDraft("Grilled chicken", 280, 52, 0, 6)
-    if ("beef" in t || "steak" in t) result += IngredientDraft("Beef", 320, 38, 0, 18)
-    if ("salmon" in t) result += IngredientDraft("Salmon", 300, 34, 0, 18)
-    if ("tofu" in t) result += IngredientDraft("Tofu", 180, 20, 8, 10)
-    if ("greens" in t || "salad" in t || "lettuce" in t) result += IngredientDraft("Greens base", 45, 3, 8, 0)
-    if ("rice" in t || "pasta" in t || "bread" in t || "pita" in t) result += IngredientDraft("Grain / bread", 210, 6, 42, 2, included = !("no pita" in t || "no bread" in t))
-    if ("beans" in t || "corn" in t) result += IngredientDraft("Beans & corn", 130, 7, 24, 1)
-    if ("avocado" in t || "hummus" in t || "cheese" in t || "dressing" in t || "sauce" in t) result += IngredientDraft("Toppings & dressing", 160, 4, 10, 12)
-    if (result.isEmpty()) result += IngredientDraft("Mixed meal estimate", 450, 25, 45, 18)
-    return result
-}
-private val customizationChips = listOf("No Pita" to -240, "Extra Chicken" to 190, "Greens Base" to -185, "Half Rice / Half Greens" to -105, "Heavy Tzatziki / Sriracha" to 90, "Grillo's Pickles" to 15, "Extra Hummus" to 70)
-
-@Composable private fun MealScreen(s: PulseFitUiState, vm: DashboardViewModel, onToast: (String) -> Unit) {
-    val context = LocalContext.current
-    var description by remember { mutableStateOf("Grilled chicken bowl with greens, black beans, corn, avocado and light dressing") }
-    var ingredients by remember { mutableStateOf(parseIngredients(description)) }
-    var slot by remember { mutableStateOf("Dinner") }
-    var photoUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    var analyzing by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> photoUri = uri; if (uri != null) onToast("Photo attached. Add a description to estimate ingredients.") }
-    var cameraOpen by remember { mutableStateOf(false) }
-    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) cameraOpen = true else onToast("Camera permission is needed to take a meal photo") }
-    val total = remember(ingredients) { IngredientTotals(ingredients.filter { it.included }.sumOf { (it.kcal * it.multiplier).toInt() }, ingredients.filter { it.included }.sumOf { (it.p * it.multiplier).toInt() }, ingredients.filter { it.included }.sumOf { (it.c * it.multiplier).toInt() }, ingredients.filter { it.included }.sumOf { (it.f * it.multiplier).toInt() }) }
-    ScrollPage {
-        Column { Text("AI MEAL SCANNER", color = Emerald, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp); Text("Describe and customize", color = White, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Icon(Icons.Default.PhotoLibrary, null); Text("Choose photo") }; OutlinedButton(onClick = { cameraPermission.launch(android.Manifest.permission.CAMERA) }) { Icon(Icons.Default.CameraAlt, null); Text("Camera") } }
-        if (photoUri != null) Text("Photo selected: ${photoUri?.lastPathSegment ?: "meal image"}", color = Cyan, fontSize = 11.sp)
-        SurfaceCard {
-            OutlinedTextField(description, { description = it }, modifier = Modifier.fillMaxWidth(), minLines = 2, label = { Text("Meal or takeout modifications") }, colors = OutlinedTextFieldDefaults.colors(focusedTextColor = White, unfocusedTextColor = White, focusedBorderColor = Emerald, unfocusedBorderColor = Muted, focusedLabelColor = Emerald, unfocusedLabelColor = Muted))
-            Button(onClick = {
-                scope.launch {
-                    if (s.settings.geminiKey.isBlank()) { ingredients = parseIngredients(description); onToast("Local meal estimate refreshed · add a Gemini key for photo AI") }
-                    else {
-                        analyzing = true
-                        runCatching { analyzeMealWithGemini(context = context, apiKey = s.settings.geminiKey, text = description, imageUri = photoUri) }
-                            .onSuccess { ingredients = it; onToast("Gemini ingredient estimate ready") }
-                            .onFailure { onToast("AI analysis failed · ${it.message ?: "check key or connection"}") }
-                        analyzing = false
-                    }
-                }
-            }, enabled = !analyzing, colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg), modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.AutoAwesome, null); Text(if (analyzing) "Analyzing…" else "Analyze meal") }
-            Text(if (s.settings.geminiKey.isBlank()) "Offline local text estimates are active. Add a Gemini key in Profile to enable image and text AI." else "When you analyze, the meal description and attached photo are sent to Google Gemini. Estimates may be inaccurate." , color = Muted, fontSize = 10.sp)
-        }
-        Text("TAKEOUT QUICK CUSTOMIZATIONS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        customizationChips.chunked(2).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { row.forEach { (label, kcal) -> AssistChip(onClick = {
-            if (label == "Extra Chicken") ingredients = ingredients + IngredientDraft("Extra chicken", 190, 36, 0, 4)
-            else if (label == "No Pita") ingredients = ingredients.map { if (it.name.contains("Grain")) it.copy(included = false) else it }
-            else ingredients = ingredients + IngredientDraft(label, kcal.coerceAtLeast(0), if (label == "Extra Hummus") 3 else 0, 5, 4)
-            onToast("Applied $label (${if (kcal >= 0) "+" else ""}$kcal kcal)")
-        }, label = { Text("$label ${if (kcal >= 0) "+" else ""}$kcal", fontSize = 9.sp) }) } } }
-        SurfaceCard {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Ingredient estimate", color = White, fontWeight = FontWeight.Bold); Text("${total.kcal} kcal", color = Emerald, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp) }
-            ingredients.forEachIndexed { index, item ->
-                Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(item.included, { ingredients = ingredients.toMutableList().also { list -> list[index] = list[index].copy(included = it) } }, colors = CheckboxDefaults.colors(checkedColor = Emerald))
-                        Column(Modifier.weight(1f)) { Text(item.name, color = White, fontSize = 12.sp); Text("${item.kcal} kcal · ${item.p}P ${item.c}C ${item.f}F", color = Muted, fontSize = 10.sp) }
-                        Text("${(item.kcal * item.multiplier).toInt()}", color = Cyan, fontWeight = FontWeight.Bold)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) { listOf(.5f, 1f, 1.5f, 2f).forEach { mult -> FilterChip(selected = item.multiplier == mult, onClick = { ingredients = ingredients.toMutableList().also { list -> list[index] = list[index].copy(multiplier = mult) } }, label = { Text("${mult}x", fontSize = 9.sp) }) } }
-                }
-            }
-            Text("${total.protein}g protein · ${total.carbs}g carbs · ${total.fat}g fat", color = Muted, fontSize = 11.sp)
-            Row(verticalAlignment = Alignment.CenterVertically) { Text("Meal slot", color = Muted); Spacer(Modifier.width(8.dp)); listOf("Breakfast", "Lunch", "Dinner", "Snack").forEach { FilterChip(selected = slot == it, onClick = { slot = it }, label = { Text(it, fontSize = 9.sp) }) } }
-            Button(onClick = { vm.logMeal(slot, description.take(80), total, ingredients.map { IngredientItem(mealId = "", name = it.name, baseKcal = it.kcal, baseProtein = it.p, baseCarbs = it.c, baseFat = it.f, multiplier = it.multiplier, included = it.included) }); onToast("Meal logged") }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg)) { Text("Log meal · ${total.kcal} kcal") }
-        }
-        Text("TODAY'S MEALS", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        s.meals.forEach { meal -> SurfaceCard { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("${meal.slot} · ${meal.name}", color = White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp); Text("${meal.protein}P · ${meal.carbs}C · ${meal.fat}F", color = Muted, fontSize = 10.sp) }; Text("${meal.kcal} kcal", color = Emerald); IconButton(onClick = { vm.deleteMeal(meal.id); onToast("Meal removed") }) { Icon(Icons.Default.Delete, "Remove meal", tint = Muted) } } } }
-    }
-    if (cameraOpen) CameraCaptureDialog(onDismiss = { cameraOpen = false }, onSaved = { uri -> photoUri = uri; cameraOpen = false; onToast("Photo captured. Add a description to estimate ingredients.") })
-}
-
-private suspend fun analyzeMealWithGemini(context: android.content.Context, apiKey: String, text: String, imageUri: Uri?): List<IngredientDraft> = withContext(Dispatchers.IO) {
-    val parts = JSONArray()
-    if (imageUri != null) {
-        val bytes = context.contentResolver.openInputStream(imageUri)?.use { it.readBytes() } ?: error("Could not read selected photo")
-        val mime = context.contentResolver.getType(imageUri) ?: "image/jpeg"
-        parts.put(JSONObject().put("inline_data", JSONObject().put("mime_type", mime).put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))))
-    }
-    val prompt = "Estimate this meal's edible ingredients and nutrition. User description: ${text.ifBlank { "Analyze the attached meal photo." }}. Return ONLY a JSON array; each item must have name, kcal, protein, carbs, fat as numbers. Use realistic portions and no markdown."
-    parts.put(JSONObject().put("text", prompt))
-    val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", parts)))
-    val connection = (URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent").openConnection() as HttpURLConnection).apply {
-        requestMethod = "POST"; connectTimeout = 20000; readTimeout = 30000; doOutput = true
-        setRequestProperty("Content-Type", "application/json"); setRequestProperty("x-goog-api-key", apiKey)
-    }
-    try {
-        connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-        val code = connection.responseCode
-        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val response = stream.bufferedReader().use { it.readText() }
-        if (code !in 200..299) error("Gemini returned HTTP $code")
-        val responseJson = JSONObject(response)
-        val answer = responseJson.getJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text")
-        val clean = answer.substringAfter('[', "[").let { "[" + it.substringBeforeLast(']', "[]") + "]" }
-        val rows = JSONArray(clean)
-        (0 until rows.length()).map { i ->
-            val row = rows.getJSONObject(i)
-            IngredientDraft(row.optString("name", "Meal ingredient"), row.optInt("kcal"), row.optInt("protein"), row.optInt("carbs"), row.optInt("fat"))
-        }.ifEmpty { error("Gemini did not return any ingredients") }
-    } finally { connection.disconnect() }
-}
-
-@Composable private fun CameraCaptureDialog(onDismiss: () -> Unit, onSaved: (Uri) -> Unit) {
-    val context = LocalContext.current
-    val owner = LocalLifecycleOwner.current
-    val executor = remember { Executors.newSingleThreadExecutor() }
-    val capture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
-    var previewView by remember { mutableStateOf<PreviewView?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    DisposableEffect(previewView) {
-        val view = previewView
-        if (view != null) {
-            val future = ProcessCameraProvider.getInstance(context)
-            future.addListener({ runCatching {
-                val provider = future.get(); val preview = Preview.Builder().build().also { it.surfaceProvider = view.surfaceProvider }
-                provider.unbindAll(); provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
-            }.onFailure { error = it.message ?: "Camera could not start" } }, ContextCompat.getMainExecutor(context))
-            onDispose { runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() } }
-        } else onDispose { }
-    }
-    DisposableEffect(Unit) { onDispose { executor.shutdown() } }
-    Dialog(onDismissRequest = onDismiss) {
-        SurfaceCard {
-            Text("Capture meal photo", color = White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-            AndroidView(factory = { ctx -> PreviewView(ctx).apply { layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 640); scaleType = PreviewView.ScaleType.FILL_CENTER; previewView = this } }, modifier = Modifier.fillMaxWidth().height(360.dp))
-            error?.let { Text(it, color = Color(0xFFFDA4AF), fontSize = 11.sp) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                Button(onClick = {
-                    val output = File(context.cacheDir, "meal-${System.currentTimeMillis()}.jpg")
-                    val options = ImageCapture.OutputFileOptions.Builder(output).build()
-                    capture.takePicture(options, executor, object : ImageCapture.OnImageSavedCallback {
-                        override fun onImageSaved(result: ImageCapture.OutputFileResults) { ContextCompat.getMainExecutor(context).execute { onSaved(Uri.fromFile(output)) } }
-                        override fun onError(exception: ImageCaptureException) { ContextCompat.getMainExecutor(context).execute { error = exception.message ?: "Could not save image" } }
-                    })
-                }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Emerald, contentColor = Bg)) { Icon(Icons.Default.CameraAlt, null); Text("Capture") }
-            }
-        }
-    }
-}
 
 @Composable private fun StepsScreen(s: PulseFitUiState, vm: DashboardViewModel, onConnect: () -> Unit, onSensor: () -> Unit) {
     var manual by remember(s.steps) { mutableFloatStateOf(s.steps.toFloat()) }

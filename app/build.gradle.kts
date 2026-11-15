@@ -47,5 +47,6 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.guava:guava:33.3.1-android")
+    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
