@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -73,7 +74,7 @@ private val MealWhite = Color(0xFFF8FAFC)
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap = it; if (it == null) onToast("No photo captured") }
     val totalRows = state.ingredients.filter { it.included }
     val total = IngredientTotals(totalRows.sumOf { (it.kcal * it.multiplier).toInt() }, totalRows.sumOf { (it.p * it.multiplier).toInt() }, totalRows.sumOf { (it.c * it.multiplier).toInt() }, totalRows.sumOf { (it.f * it.multiplier).toInt() })
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.testTag("meal_scanner").fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("AI MEAL SCANNER", color = MealGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
         Text("Scan, customize, and log", color = MealWhite, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -82,13 +83,13 @@ private val MealWhite = Color(0xFFF8FAFC)
             Button(onClick = {
                 vm.markSamsungHealthLaunch()
                 val launch = context.packageManager.getLaunchIntentForPackage("com.sec.android.app.shealth")
-                if (launch == null) Toast.makeText(context, "Samsung Health is not installed", Toast.LENGTH_LONG).show()
+                if (launch == null) { Toast.makeText(context, "Samsung Health is not installed", Toast.LENGTH_LONG).show(); onToast("Samsung Health isn't installed · meal scanning remains available in SplitCal") }
                 else {
                     Toast.makeText(context, "Scan your meal or barcode in Samsung Health, then return to SplitCal to auto-import", Toast.LENGTH_LONG).show()
                     runCatching { context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                        .onFailure { Toast.makeText(context, "Could not open Samsung Health", Toast.LENGTH_SHORT).show() }
+                        .onFailure { Toast.makeText(context, "Could not open Samsung Health", Toast.LENGTH_SHORT).show(); onToast("Could not open Samsung Health · meal scanning remains available in SplitCal") }
                 }
-            }, modifier = Modifier.weight(1.45f), colors = ButtonDefaults.buttonColors(containerColor = MealCyan, contentColor = MealBg)) { Text("Scan in Samsung Health", fontSize = 9.sp, maxLines = 2) }
+            }, modifier = Modifier.weight(1.45f).testTag("scan_samsung_health"), colors = ButtonDefaults.buttonColors(containerColor = MealCyan, contentColor = MealBg)) { Text("Scan in Samsung Health", fontSize = 9.sp, maxLines = 2) }
         }
         state.syncStatus?.let { Text(it, color = if (it.startsWith("Imported") || it.startsWith("Samsung Health sync complete")) MealCyan else MealMuted, fontSize = 10.sp) }
         if (bitmap != null) {
@@ -119,13 +120,13 @@ private val MealWhite = Color(0xFFF8FAFC)
             }
         }
         Text("RESTAURANT & TAKEOUT PRESETS", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(MealPresets.all) { preset -> AssistChip(onClick = { vm.loadPreset(preset); title = preset.title; onToast("Loaded ${preset.title}") }, label = { Text(preset.title, fontSize = 10.sp) }) }
+        LazyRow(Modifier.testTag("meal_presets"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(MealPresets.all) { preset -> AssistChip(onClick = { vm.loadPreset(preset); title = preset.title; onToast("Loaded ${preset.title}") }, modifier = if (preset.title.startsWith("Just Salad · Cilantro Lime")) Modifier.testTag("preset_just_salad") else Modifier, label = { Text(preset.title, fontSize = 10.sp) }) }
         }
         Text("ONE-TAP MODIFIERS", color = MealMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        LazyRow(Modifier.testTag("meal_modifiers"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(listOf("Remove Pita" to "−240 kcal", "Extra Chicken" to "+190 kcal / +36g P", "Sub Greens for Rice" to "−185 kcal", "Extra Hummus Scoop" to "+70 kcal", "No Heavy Sauce" to "−120 kcal")) { (name, detail) ->
-                FilterChip(selected = false, onClick = { vm.applyModification(name); onToast("Applied $name") }, label = { Text("$name $detail", fontSize = 9.sp) })
+                FilterChip(selected = false, onClick = { vm.applyModification(name); onToast("Applied $name") }, modifier = Modifier.testTag(if (name == "Remove Pita") "modifier_remove_pita" else if (name == "Extra Chicken") "modifier_extra_chicken" else "modifier_${name.lowercase().replace(' ', '_')}"), label = { Text("$name $detail", fontSize = 9.sp) })
             }
         }
         if (state.savings > 0) AssistChip(onClick = {}, label = { Text("Calorie savings · ${state.savings} kcal") }, colors = AssistChipDefaults.assistChipColors(labelColor = MealGreen))
@@ -133,7 +134,7 @@ private val MealWhite = Color(0xFFF8FAFC)
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("INGREDIENT BREAKDOWN", color = MealWhite, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text("${total.kcal} kcal", color = MealGreen, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                    Text("${total.kcal} kcal", color = MealGreen, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, modifier = Modifier.testTag("meal_total_kcal"))
                 }
                 state.ingredients.forEachIndexed { index, item ->
                     Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
@@ -148,7 +149,7 @@ private val MealWhite = Color(0xFFF8FAFC)
                 }
                 Text("${total.protein}g protein · ${total.carbs}g carbs · ${total.fat}g fat", color = MealCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { listOf("Breakfast", "Lunch", "Dinner", "Snack").forEach { FilterChip(slot == it, { slot = it }, label = { Text(it, fontSize = 9.sp) }) } }
-                Button(onClick = { vm.logMeal(slot) { status -> onToast("$title saved · ${total.kcal} kcal · $status") } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) { Text(if (state.editingMealId != null) "Save meal edits · ${total.kcal} kcal" else "Log meal · ${total.kcal} kcal") }
+                Button(onClick = { vm.logMeal(slot) { status -> onToast("$title saved · ${total.kcal} kcal · $status") } }, modifier = Modifier.fillMaxWidth().testTag("log_meal"), colors = ButtonDefaults.buttonColors(containerColor = MealGreen, contentColor = MealBg)) { Text(if (state.editingMealId != null) "Save meal edits · ${total.kcal} kcal" else "Log meal · ${total.kcal} kcal") }
                 state.syncStatus?.let { Text(it, color = if (it.startsWith("Synced")) MealGreen else MealMuted, fontSize = 10.sp) }
             }
         }

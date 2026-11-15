@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,7 +38,8 @@ private val StepWhite = Color(0xFFF8FAFC)
     dashboard: SplitCalUiState,
     vm: StepsViewModel,
     onConnectHealthConnect: () -> Unit,
-    onEnableSensor: () -> Unit
+    onEnableSensor: () -> Unit,
+    onSamsungHealthSync: () -> Unit
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -52,8 +54,8 @@ private val StepWhite = Color(0xFFF8FAFC)
     val personalBurn = StepBurnCalculator.personal(steps)
     val rawBurn = actualActive ?: StepBurnCalculator.rawReference(steps)
     val delta = (rawBurn - personalBurn).coerceAtLeast(0)
-    LazyColumn(Modifier.fillMaxSize().background(StepBg), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Column { Text("HEALTH STEPS", color = StepCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp); Text("Samsung Health & daily movement", color = StepWhite, fontSize = 21.sp, fontWeight = FontWeight.Bold) } }
+    LazyColumn(Modifier.fillMaxSize().background(StepBg).testTag("steps_list"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Column(Modifier.testTag("steps_heading")) { Text("HEALTH STEPS", color = StepCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp); Text("Samsung Health & daily movement", color = StepWhite, fontSize = 21.sp, fontWeight = FontWeight.Bold) } }
         item {
             StepCard {
                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.DirectionsWalk, null, tint = StepCyan); Spacer(Modifier.width(8.dp)); Text("${steps.prettySteps()} / ${dashboard.settings.stepGoal.prettySteps()} steps", color = StepWhite, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold) }
@@ -62,7 +64,7 @@ private val StepWhite = Color(0xFFF8FAFC)
                 Button(onClick = onConnectHealthConnect, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = StepGreen, contentColor = StepBg)) { Icon(Icons.Default.HealthAndSafety, null); Spacer(Modifier.width(6.dp)); Text("Connect / permissions") }
                 if (state.sdkAvailable) OutlinedButton(onClick = { (context as? android.app.Activity)?.let(vm::requestSamsungPermissions) }, modifier = Modifier.fillMaxWidth()) { Text("Connect Samsung Health Data SDK", fontSize = 10.sp) }
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    OutlinedButton(onClick = vm::refresh, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Sync, null); Text("Sync") }
+                    OutlinedButton(onClick = onSamsungHealthSync, modifier = Modifier.weight(1f).testTag("sync_samsung_health")) { Icon(Icons.Default.Sync, null); Text("Sync Samsung Health") }
                     OutlinedButton(onClick = { context.packageManager.getLaunchIntentForPackage(SamsungHealthRepository.SAMSUNG_HEALTH_PACKAGE)?.let(context::startActivity) ?: (context as? android.app.Activity)?.let { guideOpen = true } }, modifier = Modifier.weight(1f)) { Text("Open Samsung Health", fontSize = 10.sp) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -76,7 +78,7 @@ private val StepWhite = Color(0xFFF8FAFC)
             StepCard {
                 Text("SAMSUNG HEALTH VS. CALIBRATED BURN", color = StepWhite, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 DataLine("Synced Samsung Health steps", "${steps.prettySteps()} / 15,000")
-                DataLine("Calibrated active burn · 500 / 15k", "$personalBurn kcal")
+                DataLine("Calibrated active burn · 500 / 15k", "$personalBurn kcal", modifier = Modifier.testTag("calibrated_burn"))
                 DataLine("Raw wearable reported burn", "$rawBurn kcal${if (actualActive == null) " · estimate" else ""}")
                 Text("+$delta kcal discrepancy prevented from inflating your daily calorie budget", color = StepGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 state.snapshot?.totalCalories?.let { Text("Health Connect total calories (includes resting energy): $it kcal", color = StepMuted, fontSize = 9.sp) }
@@ -98,7 +100,7 @@ private val StepWhite = Color(0xFFF8FAFC)
                 Slider(value = manual, onValueChange = { manual = it }, valueRange = 0f..30_000f, steps = 299, colors = SliderDefaults.colors(thumbColor = StepGreen, activeTrackColor = StepGreen))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { vm.addSteps(1800, steps) }, modifier = Modifier.weight(1f)) { Text("+1,800 steps", fontSize = 10.sp) }
-                    OutlinedButton(onClick = vm::setBenchmark, modifier = Modifier.weight(1f)) { Text("Set 15,000 Benchmark", fontSize = 9.sp) }
+                    OutlinedButton(onClick = vm::setBenchmark, modifier = Modifier.weight(1f).testTag("set_15000_benchmark")) { Text("Set 15,000 Benchmark", fontSize = 9.sp) }
                 }
                 Button(onClick = { vm.setSteps(manual.toInt()) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = StepGreen, contentColor = StepBg)) { Text("Save manual step count") }
             }
@@ -133,5 +135,5 @@ private val StepWhite = Color(0xFFF8FAFC)
 @Composable private fun StepCard(content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().background(StepCard, RoundedCornerShape(18.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp), content = content)
 }
-@Composable private fun DataLine(label: String, value: String) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = StepMuted, fontSize = 10.sp); Text(value, color = StepWhite, fontSize = 10.sp, fontWeight = FontWeight.SemiBold) } }
+@Composable private fun DataLine(label: String, value: String, modifier: Modifier = Modifier) { Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = StepMuted, fontSize = 10.sp); Text(value, color = StepWhite, fontSize = 10.sp, fontWeight = FontWeight.SemiBold) } }
 private fun Int.prettySteps() = toString().reversed().chunked(3).joinToString(",").reversed()

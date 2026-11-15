@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -130,7 +131,8 @@ private fun SplitCalApp(vm: DashboardViewModel = viewModel()) {
         Scaffold(containerColor = Bg, snackbarHost = { SnackbarHost(snackbar) }, bottomBar = {
             NavigationBar(containerColor = Color(0xFF0F172A)) {
                 val entries = listOf(Icons.Default.Dashboard to "Dashboard", Icons.Default.FitnessCenter to "AI Gym Planner", Icons.Default.CameraAlt to "AI Meal Scanner", Icons.AutoMirrored.Filled.DirectionsWalk to "Health Steps")
-                entries.forEachIndexed { index, (icon, label) -> NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = { Icon(icon, null) }, label = { Text(label, fontSize = 9.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Bg, selectedTextColor = Emerald, indicatorColor = Emerald, unselectedIconColor = Muted, unselectedTextColor = Muted)) }
+                val tags = listOf("tab_dashboard", "tab_workout", "tab_meals", "tab_steps")
+                entries.forEachIndexed { index, (icon, label) -> NavigationBarItem(selected = tab == index, onClick = { tab = index }, icon = { Icon(icon, null) }, label = { Text(label, fontSize = 9.sp, maxLines = 1) }, modifier = Modifier.testTag(tags[index]), colors = NavigationBarItemDefaults.colors(selectedIconColor = Bg, selectedTextColor = Emerald, indicatorColor = Emerald, unselectedIconColor = Muted, unselectedTextColor = Muted)) }
             }
         }) { pad ->
             Column(Modifier.fillMaxSize().padding(pad)) {
@@ -145,6 +147,9 @@ private fun SplitCalApp(vm: DashboardViewModel = viewModel()) {
                     }, onEnableSensor = {
                         if (android.os.Build.VERSION.SDK_INT < 29 || ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED) sensorEnabled = true
                         else sensorPermissionLauncher.launch(android.Manifest.permission.ACTIVITY_RECOGNITION)
+                    }, onSamsungHealthSync = {
+                        stepsVm.refresh()
+                        if (context.packageManager.getLaunchIntentForPackage(SamsungHealthRepository.SAMSUNG_HEALTH_PACKAGE) == null) scope.launch { snackbar.showSnackbar("Samsung Health isn't installed · syncing any permitted Health Connect data") }
                     })
                 }
             }
@@ -188,7 +193,7 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
             Column { Text("SplitCal", color = White, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp); Text("COACH · VISION · HEALTH", color = Emerald, fontWeight = FontWeight.Bold, fontSize = 8.sp, letterSpacing = 1.sp) }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("%02d:%02d".format(seconds / 60, seconds % 60), color = Cyan, fontWeight = FontWeight.Bold)
+            Text("%02d:%02d".format(seconds / 60, seconds % 60), color = Cyan, fontWeight = FontWeight.Bold, modifier = Modifier.testTag("rest_timer_display"))
             TextButton(onClick = toggle, contentPadding = PaddingValues(horizontal = 5.dp)) { Text(if (running) "Pause" else "Start", color = Cyan) }
             IconButton(onClick = reset, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Refresh, "Reset rest timer", tint = Muted, modifier = Modifier.size(18.dp)) }
             IconButton(onClick = toggleMute, modifier = Modifier.size(28.dp)) { Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, if (muted) "Unmute timer alert" else "Mute timer alert", tint = if (muted) Muted else Emerald, modifier = Modifier.size(18.dp)) }
@@ -228,7 +233,7 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
             Surface(color = Raised, shape = RoundedCornerShape(50)) { Text("🏋 ${s.gymStreak}-day Gym Split Streak", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), color = Cyan, fontSize = 10.sp) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatCard("NET CALORIE BUDGET", "${s.remaining}", "kcal remaining", Emerald, Modifier.weight(1f), "${s.intake} eaten · ${s.stepBurn + s.workoutBurn} active", s.remaining.toFloat() / s.settings.calorieTarget.coerceAtLeast(1))
+            StatCard("NET CALORIE BUDGET", "${s.remaining}", "kcal remaining", Emerald, Modifier.weight(1f).testTag("dashboard_net_budget"), "${s.intake} eaten · ${s.stepBurn + s.workoutBurn} active", s.remaining.toFloat() / s.settings.calorieTarget.coerceAtLeast(1))
             StatCard("HEALTH STEPS", "%s".format(s.steps.toString().reversed().chunked(3).joinToString(",").reversed()), "of ${s.settings.stepGoal}", Cyan, Modifier.weight(1f), "${s.stepBurn} calibrated kcal", s.steps.toFloat() / s.settings.stepGoal.coerceAtLeast(1))
         }
         ActionHeading("Macro progress", "Edit targets", onProfile)
@@ -249,7 +254,7 @@ private fun TopBar(selectedDate: String, onSelectDate: (String) -> Unit, seconds
     }
 }
 
-@Composable private fun StatCard(title: String, value: String, sub: String, color: Color, modifier: Modifier, detail: String, progress: Float) { SurfaceCard(modifier) { Text(title, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold); Text(value, color = White, fontSize = 27.sp, fontWeight = FontWeight.ExtraBold); Text(sub, color = Muted, fontSize = 10.sp); Progress(progress, color); Text(detail, color = Muted, fontSize = 9.sp) } }
+@Composable private fun StatCard(title: String, value: String, sub: String, color: Color, modifier: Modifier, detail: String, progress: Float) { SurfaceCard(modifier) { Text(title, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold); Text(value, color = White, fontSize = 27.sp, fontWeight = FontWeight.ExtraBold); Text(sub, color = Muted, fontSize = 10.sp); Progress(progress, color); Text(detail, color = Muted, fontSize = 9.sp, modifier = if (title == "NET CALORIE BUDGET") Modifier.testTag("dashboard_calorie_details") else Modifier) } }
 
 @Composable private fun MacroBar(label: String, amount: Int, target: Int, color: Color) { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, color = White, fontSize = 12.sp); Text("$amount / $target g", color = Muted, fontSize = 11.sp) }; Progress(if (target > 0) amount.toFloat() / target else 0f, color) } }
 @Composable private fun ActionHeading(title: String, action: String, click: () -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text(title, color = White, fontWeight = FontWeight.Bold, fontSize = 15.sp); Text(action, color = Emerald, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.clickable(onClick = click).padding(4.dp)) } }

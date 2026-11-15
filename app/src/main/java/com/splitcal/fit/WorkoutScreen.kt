@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 
@@ -51,7 +52,7 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
     LaunchedEffect(Unit) { vm.refreshRecovery() }
     LaunchedEffect(state.healthSyncStatus) { state.healthSyncStatus?.let(onFeedback) }
 
-    LazyColumn(Modifier.fillMaxSize().background(WorkoutBg), contentPadding = PaddingValues(bottom = 22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize().background(WorkoutBg).testTag("workout_list"), contentPadding = PaddingValues(bottom = 22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SamsungHealthRecoveryBanner(recovery) }
         item {
             Column(Modifier.padding(horizontal = 16.dp).padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -62,7 +63,7 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
                 }
                 state.coachNote?.let { Text(it, Modifier.fillMaxWidth().background(WorkoutCard, RoundedCornerShape(12.dp)).padding(12.dp), color = WorkoutWhite, fontSize = 12.sp) }
                 ExposedDropdownMenuBox(expanded = splitMenu, onExpandedChange = { splitMenu = it }) {
-                    OutlinedTextField(value = state.splits.firstOrNull { it.id == state.selectedSplitId }?.name ?: "5-Day Bro Split", onValueChange = {}, readOnly = true, label = { Text("Training split") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(splitMenu) }, modifier = Modifier.fillMaxWidth().menuAnchor(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = WorkoutWhite, unfocusedTextColor = WorkoutWhite, focusedBorderColor = WorkoutGreen, unfocusedBorderColor = WorkoutMuted, focusedLabelColor = WorkoutGreen, unfocusedLabelColor = WorkoutMuted))
+                    OutlinedTextField(value = state.splits.firstOrNull { it.id == state.selectedSplitId }?.name ?: "5-Day Bro Split", onValueChange = {}, readOnly = true, label = { Text("Training split") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(splitMenu) }, modifier = Modifier.fillMaxWidth().menuAnchor().testTag("split_selector"), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = WorkoutWhite, unfocusedTextColor = WorkoutWhite, focusedBorderColor = WorkoutGreen, unfocusedBorderColor = WorkoutMuted, focusedLabelColor = WorkoutGreen, unfocusedLabelColor = WorkoutMuted))
                     ExposedDropdownMenu(expanded = splitMenu, onDismissRequest = { splitMenu = false }) {
                         state.splits.forEach { split -> DropdownMenuItem(text = { Text(split.name) }, onClick = { vm.chooseSplit(split.id); splitMenu = false; expandedExercise = null }) }
                     }
@@ -70,11 +71,11 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
             }
         }
         item {
-            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            LazyRow(Modifier.testTag("workout_day_selector"), contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 items((0..6).toList()) { index ->
                     val day = state.days.firstOrNull { it.dayIndex == index }
                     val focus = day?.focus?.substringBefore(" ·") ?: listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[index]
-                    Surface(shape = RoundedCornerShape(14.dp), color = if (state.selectedDay == index) WorkoutGreen else WorkoutCard, modifier = Modifier.widthIn(min = 62.dp).clickable { vm.chooseDay(index) }) {
+                    Surface(shape = RoundedCornerShape(14.dp), color = if (state.selectedDay == index) WorkoutGreen else WorkoutCard, modifier = Modifier.widthIn(min = 62.dp).testTag("workout_day_$index").clickable { vm.chooseDay(index) }) {
                         Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")[index], color = if (state.selectedDay == index) WorkoutBg else WorkoutMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                             Text(focus.take(8), color = if (state.selectedDay == index) WorkoutBg else WorkoutWhite, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -85,9 +86,9 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
         }
         item {
             Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().background(WorkoutCard, RoundedCornerShape(16.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(state.day?.focus ?: "Loading training day…", color = WorkoutWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(state.day?.focus ?: "Loading training day…", color = WorkoutWhite, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.testTag("workout_day_focus"))
                 Text(state.day?.notes ?: "Workout data is loading from your local database.", color = WorkoutMuted, fontSize = 11.sp)
-                Text("Session volume  ${"%,d".format(state.totalVolume)} lb  ·  Workout burn ${state.day?.estimatedBurnCalories ?: 0} kcal", color = WorkoutCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text("Session volume  ${"%,d".format(state.totalVolume)} lb  ·  Workout burn ${state.day?.estimatedBurnCalories ?: 0} kcal", color = WorkoutCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("session_volume"))
                 if (state.exercises.isNotEmpty()) {
                     Button(onClick = { vm.finishAndSyncWorkout() }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = WorkoutGreen, contentColor = WorkoutBg)) {
                         Text("Finish & Sync Workout to Samsung Health", fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -131,8 +132,8 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
 
 @Composable private fun ExerciseCard(session: ExerciseSession, expanded: Boolean, equipment: String, onExpand: () -> Unit, onSwap: () -> Unit, vm: WorkoutViewModel) {
     val exercise = session.exercise
-    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().background(WorkoutCard, RoundedCornerShape(18.dp))) {
-        Row(Modifier.fillMaxWidth().clickable(onClick = onExpand).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().background(WorkoutCard, RoundedCornerShape(18.dp)).testTag("exercise_card_${exercise.id}")) {
+        Row(Modifier.fillMaxWidth().clickable(onClick = onExpand).padding(14.dp).testTag("exercise_expand_${exercise.id}"), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(exercise.name, color = WorkoutWhite, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Text("${exercise.plannedSets} sets · ${exercise.repRange} reps · ${exercise.restSeconds}s rest", color = WorkoutMuted, fontSize = 10.sp)
@@ -145,7 +146,7 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
             Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text("SET / TYPE", color = WorkoutMuted, fontSize = 8.sp, fontWeight = FontWeight.Bold); Text("WEIGHT · REPS", color = WorkoutMuted, fontSize = 8.sp, fontWeight = FontWeight.Bold); Text("DONE", color = WorkoutMuted, fontSize = 8.sp, fontWeight = FontWeight.Bold) }
                 session.sets.forEach { set -> SetRow(set, exercise, vm) }
-                Text("Exercise volume: ${"%,d".format(session.sets.filter { it.isCompleted }.sumOf { (it.weightLbs * it.reps).toLong() })} lb", color = WorkoutCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text("Exercise volume: ${"%,d".format(session.sets.filter { it.isCompleted }.sumOf { (it.weightLbs * it.reps).toLong() })} lb", color = WorkoutCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.testTag("exercise_volume_${exercise.id}"))
             }
         }
     }
@@ -161,17 +162,17 @@ fun WorkoutScreen(vm: WorkoutViewModel = viewModel(), onFeedback: (String) -> Un
         TextButton(onClick = { vm.cycleSetType(set) }, contentPadding = PaddingValues(horizontal = 3.dp)) {
             Text(when (set.setType) { SetType.WARMUP -> "[W] Warmup"; SetType.WORKING -> "[${set.setNumber}] Working"; SetType.DROP -> "[D] Drop"; SetType.FAILURE -> "[F] Failure" }, color = setTypeColor(set.setType), fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
-        CompactNumberField(weightText, "lbs", { value -> weightText = value; vm.updateSet(set.copy(weightLbs = value.toFloatOrNull() ?: 0f)) }, Modifier.width(58.dp), weightFocused, { weightFocused = it })
+        CompactNumberField(weightText, "lbs", { value -> weightText = value; vm.updateSet(set.copy(weightLbs = value.toFloatOrNull() ?: 0f)) }, Modifier.width(58.dp).testTag("set_weight"), weightFocused, { weightFocused = it })
         Text("×", color = WorkoutMuted, fontSize = 11.sp)
-        CompactNumberField(repsText, "reps", { value -> repsText = value; vm.updateSet(set.copy(reps = value.toIntOrNull() ?: 0)) }, Modifier.width(52.dp), repsFocused, { repsFocused = it })
+        CompactNumberField(repsText, "reps", { value -> repsText = value; vm.updateSet(set.copy(reps = value.toIntOrNull() ?: 0)) }, Modifier.width(52.dp).testTag("set_reps"), repsFocused, { repsFocused = it })
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("1RM", color = WorkoutMuted, fontSize = 7.sp)
-            Text("${epley(set.weightLbs, set.reps).toInt()}", color = WorkoutCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("${epley(set.weightLbs, set.reps).toInt()}", color = WorkoutCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.testTag("set_epley_${set.id}"))
         }
         var showRpe by remember(set.id) { mutableStateOf(false) }
         if (showRpe) OutlinedTextField(value = set.rpe.toInt().toString(), onValueChange = { vm.updateSet(set.copy(rpe = it.toFloatOrNull() ?: set.rpe)) }, modifier = Modifier.width(42.dp).height(47.dp), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), label = { Text("RPE", fontSize = 7.sp) })
         else IconButton(onClick = { showRpe = true }, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Tune, "Edit RPE ${set.rpe}", tint = WorkoutMuted, modifier = Modifier.size(16.dp)) }
-        Checkbox(checked = set.isCompleted, onCheckedChange = { checked -> haptics.performHapticFeedback(HapticFeedbackType.LongPress); vm.completeSet(set, checked, exercise.restSeconds) }, colors = CheckboxDefaults.colors(checkedColor = WorkoutGreen, uncheckedColor = WorkoutMuted), modifier = Modifier.size(34.dp))
+        Checkbox(checked = set.isCompleted, onCheckedChange = { checked -> haptics.performHapticFeedback(HapticFeedbackType.LongPress); vm.completeSet(set, checked, exercise.restSeconds) }, colors = CheckboxDefaults.colors(checkedColor = WorkoutGreen, uncheckedColor = WorkoutMuted), modifier = Modifier.size(34.dp).testTag("set_complete"))
     }
 }
 
